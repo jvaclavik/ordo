@@ -1,0 +1,261 @@
+import { nanoid } from "nanoid";
+import { useEffect, useState } from "react";
+import { dispatch, useSnap } from "../data/store.tsx";
+import { todayKey } from "../domain/dates.ts";
+import { alive, byId, inboxFolder, isValidDb } from "../domain/db.ts";
+import { orderedRules } from "../domain/rules.ts";
+import { activeFolders } from "../domain/select.ts";
+import { useUi } from "./state.tsx";
+import { ThemeSwitch } from "./theme.tsx";
+import { Button, control, Field, modLabel } from "./ui.tsx";
+import { FolderPicker } from "./folderPick.tsx";
+
+export function SettingsPage() {
+  const { db } = useSnap();
+  const ui = useUi();
+  useEffect(() => {
+    if (window.location.hash !== "#pravidla") return;
+    document.getElementById("pravidla")?.scrollIntoView({ block: "start" });
+  }, []);
+  const archived = db.folders.filter(
+    (folder) => !folder.isDeleted && folder.isArchived
+  );
+  return (
+    <div className="grid max-w-2xl gap-8">
+      <header>
+        <h1 className="font-display text-3xl">Nastavení</h1>
+        <p className="text-muted">
+          Data zůstávají v tomhle prohlížeči. Synchronizace přijde později.
+        </p>
+      </header>
+      <section className="grid gap-3">
+        <h2 className="font-display text-2xl">Vzhled</h2>
+        <ThemeSwitch labeled />
+      </section>
+      <section className="grid gap-2">
+        <h2 className="font-display text-2xl">Záloha</h2>
+        <div className="flex flex-wrap gap-2">
+          <Button tone="solid" onClick={() => download(db)}>
+            Stáhnout JSON
+          </Button>
+          <label className="inline-flex cursor-pointer items-center rounded-md px-3 py-1.5 text-sm hover:bg-black/5">
+            Načíst JSON
+            <input
+              className="sr-only"
+              type="file"
+              accept="application/json"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                void file
+                  .text()
+                  .then((text) => {
+                    const data: unknown = JSON.parse(text);
+                    if (!isValidDb(data)) {
+                      ui.pushToast("Soubor není platná záloha.");
+                      return;
+                    }
+                    dispatch({ type: "replaceDb", db: data });
+                    ui.pushToast("Záloha je načtená.");
+                  })
+                  .catch(() => ui.pushToast("Soubor se nepodařilo přečíst."));
+                event.target.value = "";
+              }}
+            />
+          </label>
+        </div>
+      </section>
+      <Rules />
+      <section>
+        <h2 className="mb-2 font-display text-2xl">Archiv</h2>
+        {archived.length === 0 && (
+          <p className="text-sm text-muted">Archiv je prázdný.</p>
+        )}
+        {archived.map((folder) => (
+          <div
+            key={folder.id}
+            className="flex items-center justify-between py-1"
+          >
+            <span>{folder.name}</span>
+            <Button
+              onClick={() =>
+                dispatch({
+                  type: "updateFolder",
+                  id: folder.id,
+                  patch: { isArchived: false },
+                })
+              }
+            >
+              Vrátit
+            </Button>
+          </div>
+        ))}
+      </section>
+      <section>
+        <h2 className="mb-2 font-display text-2xl">Klávesy</h2>
+        <ul className="grid gap-1 text-sm text-muted">
+          <li>Mezerník nebo N přidá úkol</li>
+          <li>{modLabel}K hledá. Šipky a Enter vyberou výsledek</li>
+          <li>
+            Enter potvrdí okno, {modLabel}Enter i z delšího textu. Escape okno
+            zavře
+          </li>
+          <li>
+            Šipky přepínají úkoly, Enter upraví název, Shift+Enter píše popis, X
+            označí hotovo
+          </li>
+          <li>Shift nebo {modLabel} přidá další karty do výběru</li>
+          <li>Delete nabídne smazání vybrané karty</li>
+          <li>
+            {modLabel}Z vrací poslední krok, Shift+{modLabel}Z ho zopakuje
+          </li>
+          <li>
+            V rychlém přidání lomítko našeptá složku a mřížka tag. Enter uloží,
+            Alt+Enter nebo Shift+Enter přidá popis
+          </li>
+        </ul>
+      </section>
+      <p className="text-sm text-muted">
+        Složek je {activeFolders(db).length}. Dnes je {todayKey()}.
+      </p>
+    </div>
+  );
+}
+
+function download(db: unknown) {
+  const blob = new Blob([JSON.stringify(db, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `ukoly-${todayKey()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function Rules() {
+  const { db } = useSnap();
+  const folders = activeFolders(db).filter(
+    (folder) => folder.system !== "inbox"
+  );
+  const tags = alive(db.tags);
+  const inboxId = inboxFolder(db)?.id;
+  const [text, setText] = useState("");
+  const [tagId, setTagId] = useState("");
+  const [folderId, setFolderId] = useState(folders[0]?.id ?? "");
+  const [store, setStore] = useState("");
+  const rules = orderedRules(db);
+  return (
+    <section id="pravidla" className="grid scroll-mt-6 gap-3">
+      <h2 className="font-display text-2xl">Pravidla pro nezařazené</h2>
+      <p className="text-sm text-muted">
+        Pravidla se použijí hned po uložení nebo přejmenování. Stačí text,
+        štítek, nebo obojí. Když vyplníš obojí, musí sedět obojí. Návrh bez
+        pravidla se jen nabídne.
+      </p>
+      <form
+        className="grid gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if ((!text.trim() && !tagId) || !folderId) return;
+          dispatch({
+            type: "createRule",
+            id: nanoid(10),
+            matchText: text.trim() || null,
+            matchTagId: tagId || null,
+            actionFolderId: folderId,
+            actionStatusId: null,
+            actionTagId: null,
+            actionStore: store.trim() || null,
+          });
+          setText("");
+          setTagId("");
+          setStore("");
+        }}
+      >
+        <Field label="Když text obsahuje">
+          <input
+            className={control}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="volitelné"
+          />
+        </Field>
+        <Field label="Když má štítek">
+          <select
+            className={control}
+            value={tagId}
+            onChange={(event) => setTagId(event.target.value)}
+          >
+            <option value="">Nevyžadovat</option>
+            {tags.map((tag) => (
+              <option key={tag.id} value={tag.id}>
+                {tag.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Zařadit do">
+          <FolderPicker
+            value={folderId}
+            excludeIds={inboxId ? [inboxId] : []}
+            onPick={(id) => {
+              if (id) setFolderId(id);
+            }}
+          />
+        </Field>
+        <Field label="Obchod, volitelně">
+          <input
+            className={control}
+            value={store}
+            onChange={(event) => setStore(event.target.value)}
+          />
+        </Field>
+        <Button tone="solid" type="submit" className="mt-1 w-fit">
+          Přidat pravidlo
+        </Button>
+      </form>
+      {rules.map((rule) => {
+        const folder = byId(db.folders, rule.actionFolderId);
+        const tag = byId(db.tags, rule.matchTagId);
+        return (
+          <div
+            key={rule.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-black/[0.04] px-3 py-2 dark:bg-white/[0.06]"
+          >
+            <span className="text-sm">
+              {[
+                rule.matchText ? `„${rule.matchText}“` : null,
+                tag ? `#${tag.name}` : null,
+              ]
+                .filter(Boolean)
+                .join(" + ") || "Pravidlo"}{" "}
+              → {folder?.name ?? "smazaná složka"}
+              {rule.actionStore ? `, ${rule.actionStore}` : ""}
+            </span>
+            <span className="flex gap-1">
+              <Button
+                onClick={() =>
+                  dispatch({
+                    type: "updateRule",
+                    id: rule.id,
+                    enabled: !rule.enabled,
+                  })
+                }
+              >
+                {rule.enabled ? "Vypnout" : "Zapnout"}
+              </Button>
+              <Button
+                tone="danger"
+                onClick={() => dispatch({ type: "deleteRule", id: rule.id })}
+              >
+                Smazat
+              </Button>
+            </span>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
