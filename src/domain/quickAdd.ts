@@ -1,15 +1,16 @@
+import { findClocks } from "./clock.ts";
 import {
   addDays,
   nextWeekday,
   resolveMonthDay,
   weekdayFromName,
 } from "./dates.ts";
-import { findHorizons } from "./horizon.ts";
 import { alive, byId, inboxFolder, resolvedOpen } from "./db.ts";
 import { newItem } from "./factory.ts";
+import { findHorizons } from "./horizon.ts";
 import type { DateRole, Op } from "./op.ts";
-import { reduce } from "./reduce.ts";
 import { priorityFromToken } from "./op.ts";
+import { reduce } from "./reduce.ts";
 import { fold, foldWithMap, originalSpan } from "./text.ts";
 import type { Ctx, Db, Folder, Priority } from "./types.ts";
 
@@ -123,10 +124,26 @@ export function parseQuickAdd(
     re: RegExp;
     run: (match: RegExpMatchArray) => { day?: string; time?: string } | null;
   }[] = [
-    { re: /pristi tyden/g, run: () => ({ day: addDays(today, 7) }) },
-    { re: /pozitri/g, run: () => ({ day: addDays(today, 2) }) },
-    { re: /zitra/g, run: () => ({ day: addDays(today, 1) }) },
-    { re: /dnes/g, run: () => ({ day: today }) },
+    {
+      re: /(?<![\p{L}\p{N}])pristi tyden(?![\p{L}\p{N}])/gu,
+      run: () => ({ day: addDays(today, 7) }),
+    },
+    {
+      re: /(?<![\p{L}\p{N}])pozitri(?![\p{L}\p{N}])/gu,
+      run: () => ({ day: addDays(today, 2) }),
+    },
+    {
+      re: /(?<![\p{L}\p{N}])(?:zejtra|zitra)(?![\p{L}\p{N}])/gu,
+      run: () => ({ day: addDays(today, 1) }),
+    },
+    {
+      re: /(?<![\p{L}\p{N}])dneska(?![\p{L}\p{N}])/gu,
+      run: () => ({ day: today }),
+    },
+    {
+      re: /(?<![\p{L}\p{N}])dnes(?![\p{L}\p{N}])/gu,
+      run: () => ({ day: today }),
+    },
     {
       re: /za (\d{1,3}) (den|dny|dni)/g,
       run: (match) => ({ day: addDays(today, Number(match[1])) }),
@@ -148,20 +165,6 @@ export function parseQuickAdd(
           match[3] ? Number(match[3]) : undefined
         );
         return day ? { day } : null;
-      },
-    },
-    {
-      re: /(?<![\p{L}\p{N}])v (\d{1,2})(?::(\d{2}))?(?![\p{L}\p{N}])/gu,
-      run: (match) => {
-        const hour = Number(match[1]);
-        const minute = match[2] ? Number(match[2]) : 0;
-        if (hour > 23 || minute > 59) return null;
-        return {
-          time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(
-            2,
-            "0"
-          )}`,
-        };
       },
     },
   ];
@@ -232,6 +235,49 @@ export function parseQuickAdd(
     });
   }
 
+  for (const clock of findClocks(folded)) {
+    hits.push({
+      start: clock.start,
+      end: clock.end,
+      priority: 1,
+      apply: (span) => {
+        dueTime = clock.time;
+        chips.push({ kind: "time", label: clock.time, ...span });
+      },
+    });
+  }
+
+  for (const spoken of spokenFolders(folded, db)) {
+    hits.push({
+      start: spoken.start,
+      end: spoken.end,
+      priority: 0,
+      apply: remember("folder", spoken.label, () => {
+        folderId = spoken.id;
+      }),
+    });
+  }
+
+  for (const spoken of spokenTags(folded, db)) {
+    hits.push({
+      start: spoken.start,
+      end: spoken.end,
+      priority: 1,
+      apply: (span) => {
+        const nameSpan = originalSpan(
+          firstLine,
+          starts,
+          spoken.nameStart,
+          spoken.nameEnd
+        );
+        const name =
+          spoken.name ?? firstLine.slice(nameSpan.start, nameSpan.end);
+        tagNames.push(name);
+        chips.push({ kind: "tag", label: name, ...span });
+      },
+    });
+  }
+
   for (const match of folded.matchAll(/@([\p{L}\p{N}_-]{1,40})/gu)) {
     hits.push({
       start: match.index,
@@ -261,7 +307,9 @@ export function parseQuickAdd(
     !title &&
     (rest ||
       dueDay ||
+      dueTime ||
       planFrom ||
+      folderId ||
       tagNames.length > 0 ||
       personNames.length > 0)
   )
@@ -519,11 +567,13 @@ export function hashAtCaret(
 export function suggestTags(db: Db, query: string): TagHint[] {
   const needle = fold(query.trim());
   return alive(db.tags)
-    .map((tag) => ({ id: tag.id, name: tag.name, score: tagScore(fold(tag.name), needle) }))
+    .map((tag) => ({
+      id: tag.id,
+      name: tag.name,
+      score: tagScore(fold(tag.name), needle),
+    }))
     .filter((tag) => tag.score > 0)
-    .sort(
-      (a, b) => b.score - a.score || a.name.localeCompare(b.name, "cs")
-    )
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "cs"))
     .slice(0, 8)
     .map(({ id, name }) => ({ id, name }));
 }
@@ -569,6 +619,178 @@ function slashScore(path: string, needle: string): number {
   if (path.split("/").some((part) => part.startsWith(needle))) return 3;
   if (name.includes(needle) || path.includes(needle)) return 2;
   return 0;
+}
+
+const FOLDER_CUE =
+  /(?<![\p{L}\p{N}])(?:do\s+|ve\s+|v\s+)?(?:slozk(?:a|u|y|e|ou|o)|adresar(?:em|i|e)?|kategori(?:emi|i|e))(?![\p{L}\p{N}])\s+/gu;
+
+const TAG_CUE =
+  /(?<![\p{L}\p{N}])(?:hashtag(?:em|u)?|tag(?:em|u)?|stit(?:kem|ky|ku|ek))(?![\p{L}\p{N}])\s+/gu;
+
+function followingWords(
+  folded: string,
+  index: number
+): { word: string; end: number }[] {
+  const words: { word: string; end: number }[] = [];
+  let cursor = index;
+  while (words.length < 4) {
+    const match = /^[\p{L}\p{N}_-]+/u.exec(folded.slice(cursor));
+    if (!match) break;
+    words.push({ word: match[0], end: cursor + match[0].length });
+    cursor += match[0].length;
+    const space = /^\s+/u.exec(folded.slice(cursor));
+    if (!space) break;
+    cursor += space[0].length;
+  }
+  return words;
+}
+
+function spokenFolders(
+  folded: string,
+  db: Db
+): { start: number; end: number; id: string; label: string }[] {
+  const found = [];
+  for (const match of folded.matchAll(FOLDER_CUE)) {
+    const start = match.index ?? 0;
+    const words = followingWords(folded, start + match[0].length);
+    const picked = bestSpokenFolder(
+      db,
+      words.map((word) => word.word)
+    );
+    const last = picked ? words[picked.consume - 1] : undefined;
+    if (!picked || !last) continue;
+    found.push({ start, end: last.end, id: picked.id, label: picked.label });
+  }
+  return found;
+}
+
+function spokenTags(
+  folded: string,
+  db: Db
+): {
+  start: number;
+  end: number;
+  nameStart: number;
+  nameEnd: number;
+  name: string | null;
+}[] {
+  const found = [];
+  const tags = alive(db.tags);
+  for (const match of folded.matchAll(TAG_CUE)) {
+    const start = match.index ?? 0;
+    const nameStart = start + match[0].length;
+    const words = followingWords(folded, nameStart);
+    if (words.length === 0) continue;
+    let consume = 1;
+    let name: string | null = null;
+    for (let count = Math.min(3, words.length); count >= 1; count -= 1) {
+      const key = words
+        .slice(0, count)
+        .map((word) => word.word)
+        .join(" ");
+      const existing = tags.find((tag) => fold(tag.name) === key);
+      if (!existing) continue;
+      consume = count;
+      name = existing.name;
+      break;
+    }
+    const last = words[consume - 1];
+    if (!last) continue;
+    found.push({ start, end: last.end, nameStart, nameEnd: last.end, name });
+  }
+  return found;
+}
+
+function bestSpokenFolder(
+  db: Db,
+  words: string[]
+): { id: string; label: string; consume: number } | null {
+  if (words.length === 0) return null;
+  const folders = folderPaths(db);
+  const candidates: {
+    id: string;
+    label: string;
+    consume: number;
+    score: number;
+  }[] = [];
+  const limit = Math.min(4, words.length);
+  for (const folder of folders) {
+    const pathWords = folder.folded.split("/");
+    const name = pathWords[pathWords.length - 1] ?? folder.folded;
+    for (let count = 1; count <= limit; count += 1) {
+      const query = words.slice(0, count);
+      const joined = query.join(" ");
+      const slashed = query.join("/");
+      let score = 0;
+      if (slashed === folder.folded || joined === name || slashed === name)
+        score = 100;
+      else if (
+        count === pathWords.length &&
+        pathWords.every(
+          (part, index) =>
+            part === query[index] ||
+            (query[index] != null &&
+              query[index].length >= 3 &&
+              part.startsWith(query[index]))
+        )
+      )
+        score = 90;
+      else if (name.startsWith(joined) && joined.length >= 3)
+        score = 70 + Math.min(15, joined.length);
+      else if (
+        count === 1 &&
+        pathWords.length === 1 &&
+        closeWord(query[0] ?? "", name)
+      )
+        score = 60;
+      if (score > 0)
+        candidates.push({
+          id: folder.id,
+          label: folder.label,
+          consume: count,
+          score,
+        });
+    }
+  }
+  candidates.sort(
+    (a, b) =>
+      Number(b.score >= 90) - Number(a.score >= 90) ||
+      b.consume - a.consume ||
+      b.score - a.score
+  );
+  const best = candidates[0];
+  if (!best) return null;
+  const ambiguous = candidates.some(
+    (other) =>
+      other.id !== best.id &&
+      other.score === best.score &&
+      other.consume === best.consume
+  );
+  if (ambiguous) return null;
+  return best;
+}
+
+function closeWord(query: string, name: string): boolean {
+  if (query === name) return true;
+  if (query.length < 4 || name.length < 4) return false;
+  const distance = levenshtein(query, name);
+  return distance <= (Math.min(query.length, name.length) >= 8 ? 2 : 1);
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  const prev = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 0; i < a.length; i += 1) {
+    let diagonal = prev[0] ?? 0;
+    prev[0] = i + 1;
+    for (let j = 0; j < b.length; j += 1) {
+      const next = prev[j + 1] ?? 0;
+      const cost = a[i] === b[j] ? 0 : 1;
+      prev[j + 1] = Math.min((prev[j] ?? 0) + 1, next + 1, diagonal + cost);
+      diagonal = next;
+    }
+  }
+  return prev[b.length] ?? 0;
 }
 
 function folderPaths(db: Db): SlashFolder[] {

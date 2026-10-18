@@ -6,6 +6,8 @@ import { todayKey } from "../domain/dates.ts";
 import type { Op } from "../domain/op.ts";
 import { freshDb, reduce } from "../domain/reduce.ts";
 import type { Ctx, Db } from "../domain/types.ts";
+import { fingerprint } from "./syncMap.ts";
+import { noteLocal, startSync } from "./sync.ts";
 
 export type Snap = {
   ready: boolean;
@@ -81,10 +83,11 @@ let timer = 0;
 let database: IDBPDatabase | null = null;
 
 function queuePersist() {
-  if (!snap.ready || snap.memoryOnly || !database) return;
+  if (!snap.ready) return;
   window.clearTimeout(timer);
   timer = window.setTimeout(() => {
-    void persist();
+    if (!snap.memoryOnly && database) void persist();
+    noteLocal(snap.db);
   }, 40);
 }
 
@@ -113,12 +116,29 @@ export function loadStore() {
         },
       });
       const stored = await database.get("kv", "state");
+      const local = isValidDb(stored) ? withPlan(stored) : null;
       snap = {
         ...snap,
         ready: true,
-        db: isValidDb(stored) ? withPlan(stored) : freshDb(runtime()),
+        db: local ?? freshDb(runtime()),
         memoryOnly: false,
       };
+      emit();
+      try {
+        await startSync(local, (db) => {
+          if (fingerprint(db) === fingerprint(snap.db)) return;
+          snap = { ...snap, db, past: [], future: [] };
+          emit();
+          void persist();
+        });
+      } catch (error) {
+        snap = {
+          ...snap,
+          persistError: error instanceof Error ? error.message : "Synchronizace se nepovedla.",
+        };
+        emit();
+      }
+      return;
     } catch {
       snap = { ...snap, ready: true, memoryOnly: true, db: freshDb(runtime()) };
     }

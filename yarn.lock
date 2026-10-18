@@ -10,6 +10,11 @@
     jsonpointer "^5.0.1"
     leven "^3.1.0"
 
+"@awasm/noble@0.1.4":
+  version "0.1.4"
+  resolved "https://registry.npmjs.org/@awasm/noble/-/noble-0.1.4.tgz"
+  integrity sha512-LFkAq7VnGc8Hum4x12yxBsyoQYq9mWDf02j1lltzXaeZ14qcXwEYnOl5ByJ49xiBk1L7h6m3vkKkInvtDUIvOg==
+
 "@babel/code-frame@^7.29.7":
   version "7.29.7"
   resolved "https://registry.npmjs.org/@babel/code-frame/-/code-frame-7.29.7.tgz"
@@ -837,6 +842,41 @@
   dependencies:
     tslib "^2.0.0"
 
+"@evolu/common@^8.14.0", "@evolu/common@^8.21.0", "@evolu/common@^8.22.1", "@evolu/common@^8.22.4", "@evolu/common@^8.23.2":
+  version "8.23.2"
+  resolved "https://registry.npmjs.org/@evolu/common/-/common-8.23.2.tgz"
+  integrity sha512-fJFTz6EU6aiSnrzBtNnhnZqVsK96Pk8HN01tZVKQRDc/hKLKYTLDvfo6km0hga2jO24JtfjmDlSVSV/nE3Z+uw==
+  dependencies:
+    "@noble/ciphers" "2.4.0"
+    "@noble/hashes" "2.4.0"
+    "@scure/bip39" "2.4.0"
+    kysely "0.29.6"
+    random "5.5.1"
+
+"@evolu/react-web@^3.2.0":
+  version "3.2.0"
+  resolved "https://registry.npmjs.org/@evolu/react-web/-/react-web-3.2.0.tgz"
+  integrity sha512-WR31jU2JSGK2zK1R7ran6JPikPVzAXuuSphvhu/PT0k4yorM7hnI6shRsAqLD6V4NHVO5fCT3YH4u0xKHJRCKQ==
+
+"@evolu/react@^11.2.1":
+  version "11.2.1"
+  resolved "https://registry.npmjs.org/@evolu/react/-/react-11.2.1.tgz"
+  integrity sha512-41VdA1YvmR8Ij+lteGl11fqVBbIz7SIU2EbBeuHcDCP6lf3utsbtdVylh58Y6p61k6sI6x5iP0c5VlyddVtW3g==
+
+"@evolu/sqlite-wasm@3.54.0-build2":
+  version "3.54.0-build2"
+  resolved "https://registry.npmjs.org/@evolu/sqlite-wasm/-/sqlite-wasm-3.54.0-build2.tgz"
+  integrity sha512-OdoChSezG07LBJvQ3UvIFqLolr6/hxM2iBLshBqECUPn12PpCckQtdfAzU94zBayLN/zo50fvCKKHhhFasgIBA==
+  dependencies:
+    "@awasm/noble" "0.1.4"
+
+"@evolu/web@^3.4.0", "@evolu/web@^3.6.2":
+  version "3.6.2"
+  resolved "https://registry.npmjs.org/@evolu/web/-/web-3.6.2.tgz"
+  integrity sha512-8Xov0/i51czy+h07gPS95FzKLrp59slGW9s+DvxMjYu2qQ5kL4n2yjuSGh4rS9D/llRU/D7G1jLdw74lPqer4w==
+  dependencies:
+    "@evolu/sqlite-wasm" "3.54.0-build2"
+
 "@isaacs/cliui@^9.0.0":
   version "9.0.0"
   resolved "https://registry.npmjs.org/@isaacs/cliui/-/cliui-9.0.0.tgz"
@@ -883,6 +923,16 @@
   dependencies:
     "@jridgewell/resolve-uri" "^3.1.0"
     "@jridgewell/sourcemap-codec" "^1.4.14"
+
+"@noble/ciphers@~2.2.0", "@noble/ciphers@2.4.0":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.4.0.tgz"
+  integrity sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==
+
+"@noble/hashes@~2.2.0", "@noble/hashes@2.4.0":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz"
+  integrity sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==
 
 "@oxc-project/types@=0.154.0":
   version "0.154.0"
@@ -948,6 +998,13 @@
   version "4.64.7"
   resolved "https://registry.npmjs.org/@rollup/rollup-darwin-arm64/-/rollup-darwin-arm64-4.64.7.tgz"
   integrity sha512-jgVpGweIbls2H5jfBB70tnX52abMd5pJr3xmtoDILx6JdmGl+Un+tMb9R+MbHPVB46tTBpY8emtn7M71SnQhEQ==
+
+"@scure/bip39@2.4.0":
+  version "2.4.0"
+  resolved "https://registry.npmjs.org/@scure/bip39/-/bip39-2.4.0.tgz"
+  integrity sha512-82dxFbZUYboyOf0AXiydsQrFQ5Q4h9mX+O2UkE91ROYmsc0BKMGZLwDmy96Jpa2+vrtoxomjUhy1RPIgH/r2nA==
+  dependencies:
+    "@noble/hashes" "2.4.0"
 
 "@tailwindcss/node@4.3.3":
   version "4.3.3"
@@ -2180,6 +2237,11 @@ jsonpointer@^5.0.1:
   resolved "https://registry.npmjs.org/jsonpointer/-/jsonpointer-5.0.1.tgz"
   integrity sha512-p/nXbhSEcu3pZRdkW1OfJhpsVtW1gd4Wa1fnQc9YLiTfAjn0312eMKimbdIQzuZl9aa9xUGaRlP9T/CJE/ditQ==
 
+kysely@0.29.6:
+  version "0.29.6"
+  resolved "https://registry.npmjs.org/kysely/-/kysely-0.29.6.tgz"
+  integrity sha512-hHaB8C/rfzDDtr/t8YZwxAuPJTT0zHyaPoVzcXwDYhYNAgH/4sIfVhi/XLLIY+bL/FqaIJnjATDbi8ObSELmxg==
+
 leven@^3.1.0:
   version "3.1.0"
   resolved "https://registry.npmjs.org/leven/-/leven-3.1.0.tgz"
@@ -2899,7 +2961,12 @@ property-information@^7.0.0:
   resolved "https://registry.npmjs.org/property-information/-/property-information-7.2.0.tgz"
   integrity sha512-IAtzIB6sUiWaJYrX9smp3V46pBGbBeLFRGdh25kg1334VcBlD8HzhPeNIWQH9zhGmo2itIe25EHt9dQP7G5hmg==
 
-react-dom@^19.3.1, react-dom@>=16.8.0:
+random@5.5.1:
+  version "5.5.1"
+  resolved "https://registry.npmjs.org/random/-/random-5.5.1.tgz"
+  integrity sha512-2TIJKf/BGjy0FGeZaan2+a/vq37afbSyscquADMFC13KBjFmg+10T/TkACpP9GMHfbEruKYbHqq0rjCA9x8gNA==
+
+react-dom@^19.3.1, react-dom@>=16.8.0, react-dom@>=19:
   version "19.3.1"
   resolved "https://registry.npmjs.org/react-dom/-/react-dom-19.3.1.tgz"
   integrity sha512-Y0bARz53lhEC1NMCASs0/j+faB/zqt3R8hpvg1e8+61ZVJ4UL0UdC4cBbXfZMcIuhrfgeILTLe+ZeBCavQPtKQ==
@@ -2923,7 +2990,7 @@ react-markdown@^10.1.0:
     unist-util-visit "^5.0.0"
     vfile "^6.0.0"
 
-"react@^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", react@^19.3.1, react@>=16.8.0, react@>=18:
+"react@^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", react@^19.3.1, react@>=16.8.0, react@>=18, react@>=19:
   version "19.3.1"
   resolved "https://registry.npmjs.org/react/-/react-19.3.1.tgz"
   integrity sha512-QNhWdt7nrgVWWQG58QuGsAR3jv3Hbe4mb4vz7w2csnHavciZJgda1CPNaldF6eVxv90ud3jUXpKlHL69gO38yw==

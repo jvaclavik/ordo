@@ -55,7 +55,8 @@ export function QuickAdd() {
       ? suggestTags(db, token.query)
       : [];
   const options = token?.kind === "tag" ? tagMatches : slashMatches;
-  const suggesting = token !== null && dismissedKey !== tokenKey && options.length > 0;
+  const suggesting =
+    token !== null && dismissedKey !== tokenKey && options.length > 0;
   const picked = Math.min(highlight, Math.max(options.length - 1, 0));
 
   useEffect(() => {
@@ -267,8 +268,8 @@ export function QuickAdd() {
               {chip.kind === "date"
                 ? formatDay(chip.label, today)
                 : chip.kind === "horizon"
-                  ? `plán ${chip.label}`
-                  : chip.label}{" "}
+                ? `plán ${chip.label}`
+                : chip.label}{" "}
               ×
             </button>
           ))}
@@ -317,7 +318,7 @@ export function QuickAdd() {
           .join(" / ") || "Nezařazené"}
         {" · "}
         {activeFolders(db).length > 0
-          ? "Složku najdeš lomítkem, třeba /Dům. Tag mřížkou, třeba #nákup. Šipky a Enter vyberou našeptanou."
+          ? "Složku najdeš lomítkem nebo slovem složka, štítek mřížkou, hashtagem nebo štítkem. Čas třeba v 9 hodin. Šipky a Enter vyberou našeptanou."
           : ""}
       </p>
       <div className="mt-4 flex justify-end">

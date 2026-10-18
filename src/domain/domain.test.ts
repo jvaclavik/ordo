@@ -3,10 +3,10 @@ import { addMonths, nextWeekday } from "./dates.ts";
 import { byId, resolvedClosed, resolvedOpen } from "./db.ts";
 import { newItem } from "./factory.ts";
 import {
+  hashAtCaret,
   opsFromQuickAdd,
   opsFromTaskLines,
   parseQuickAdd,
-  hashAtCaret,
   slashAtCaret,
   slashQueryExact,
   suggestSlashFolders,
@@ -126,10 +126,12 @@ describe("rychlé přidání", () => {
     );
     expect(slashQueryExact(db, "Dům")).toBe(true);
     expect(slashQueryExact(db, "du")).toBe(false);
-    expect(parseQuickAdd("návod https://example.com/dum", db, today).title).toBe(
-      "návod https://example.com/dum"
-    );
-    expect(parseQuickAdd("návod https://example.com/dum", db, today).folderId).toBeNull();
+    expect(
+      parseQuickAdd("návod https://example.com/dum", db, today).title
+    ).toBe("návod https://example.com/dum");
+    expect(
+      parseQuickAdd("návod https://example.com/dum", db, today).folderId
+    ).toBeNull();
     expect(
       slashAtCaret("mléko /du\npopis", "mléko /du\npopis".length)
     ).toBeNull();
@@ -140,19 +142,32 @@ describe("rychlé přidání", () => {
   it("našeptá tag po mřížce", () => {
     let db = freshDb(ctx());
     const base = ctx();
-    db = reduce(db, { type: "ensureTag", id: "nakup", name: "nákup", color: null }, base);
-    db = reduce(db, { type: "ensureTag", id: "tel", name: "telefon", color: null }, base);
+    db = reduce(
+      db,
+      { type: "ensureTag", id: "nakup", name: "nákup", color: null },
+      base
+    );
+    db = reduce(
+      db,
+      { type: "ensureTag", id: "tel", name: "telefon", color: null },
+      base
+    );
     const line = "koupit #na";
     expect(hashAtCaret(line, line.length)?.query).toBe("na");
     expect(suggestTags(db, "na").map((tag) => tag.name)).toEqual(["nákup"]);
-    expect(suggestTags(db, "").map((tag) => tag.name)).toEqual(["nákup", "telefon"]);
+    expect(suggestTags(db, "").map((tag) => tag.name)).toEqual([
+      "nákup",
+      "telefon",
+    ]);
     expect(tagQueryExact(db, "nákup")).toBe(true);
     expect(tagQueryExact(db, "na")).toBe(false);
     expect(hashAtCaret("koupit #nákup ", "koupit #nákup ".length)).toBeNull();
     expect(hashAtCaret("C#", 2)).toBeNull();
     const mixed = "volat /Dům #te";
     expect(tokenAtCaret(mixed, mixed.length)?.kind).toBe("tag");
-    expect(tokenAtCaret("volat #tel /Du", "volat #tel /Du".length)?.kind).toBe("folder");
+    expect(tokenAtCaret("volat #tel /Du", "volat #tel /Du".length)?.kind).toBe(
+      "folder"
+    );
   });
 
   it("nechá samotný název na jednom řádku", () => {
@@ -173,6 +188,85 @@ describe("rychlé přidání", () => {
       "2026-10-23"
     );
     expect(parseQuickAdd("úkol příští týden", db, today).planFrom).toBeNull();
+    expect(parseQuickAdd("úkol dneska", db, today).dueDay).toBe(today);
+    expect(parseQuickAdd("úkol zejtra", db, today).dueDay).toBe("2026-10-17");
+  });
+
+  it("z hlasu vezme čas, složku i štítek a vymaže je z názvu", () => {
+    const base = ctx();
+    let db = freshDb(base);
+    db = reduce(
+      db,
+      {
+        type: "createFolder",
+        id: "dum",
+        parentId: null,
+        name: "Dům",
+        icon: null,
+        color: null,
+        statusIds: { todo: "t", doing: "d", done: "h" },
+      },
+      base
+    );
+    db = reduce(
+      db,
+      {
+        type: "createFolder",
+        id: "kuch",
+        parentId: "dum",
+        name: "Kuchyně",
+        icon: null,
+        color: null,
+        statusIds: { todo: "t2", doing: "d2", done: "h2" },
+      },
+      base
+    );
+    const spoken = parseQuickAdd(
+      "zavolat sklenářovi dnes v 9 hod složka Dům hashtag bourání",
+      db,
+      today
+    );
+    expect(spoken.title).toBe("zavolat sklenářovi");
+    expect(spoken.dueDay).toBe(today);
+    expect(spoken.dueTime).toBe("09:00");
+    expect(spoken.folderId).toBe("dum");
+    expect(spoken.tagNames).toEqual(["bourání"]);
+
+    expect(
+      parseQuickAdd("zavolat sklenářovi dneska ve 9:00", db, today).dueTime
+    ).toBe("09:00");
+    expect(parseQuickAdd("zavolat sklenářovi 9h", db, today).dueTime).toBe(
+      "09:00"
+    );
+    expect(
+      parseQuickAdd("zavolat sklenářovi v devět hodin", db, today)
+    ).toMatchObject({ title: "zavolat sklenářovi", dueTime: "09:00" });
+    expect(parseQuickAdd("v 9 dnech zavolat", db, today).dueTime).toBeNull();
+
+    const kitchen = parseQuickAdd("kategorie Kuchyně umýt okno", db, today);
+    expect(kitchen.folderId).toBe("kuch");
+    expect(kitchen.title).toBe("umýt okno");
+    const nested = parseQuickAdd("do složky Dům Kuchyně umýt okno", db, today);
+    expect(nested.folderId).toBe("kuch");
+    expect(nested.title).toBe("umýt okno");
+    expect(
+      parseQuickAdd("složka nikam zavolat", db, today).folderId
+    ).toBeNull();
+    expect(parseQuickAdd("složka nikam zavolat", db, today).title).toBe(
+      "složka nikam zavolat"
+    );
+
+    const tagged = parseQuickAdd("štítek bourání zbořit zeď", db, today);
+    expect(tagged.tagNames).toEqual(["bourání"]);
+    expect(tagged.title).toBe("zbořit zeď");
+    db = reduce(
+      db,
+      { type: "ensureTag", id: "bour", name: "bourání", color: null },
+      base
+    );
+    expect(
+      parseQuickAdd("hashtagem bourani zbořit zeď", db, today).tagNames
+    ).toEqual(["bourání"]);
   });
 
   it("pozná období jako plán a nechá termín být", () => {
@@ -448,7 +542,11 @@ describe("pravidla, vazby a nákup", () => {
       base
     );
     expect(byId(db.items, "mleko")?.folderId).toBe("dum");
-    db = reduce(db, { type: "ensureTag", id: "tag", name: "nákup", color: null }, base);
+    db = reduce(
+      db,
+      { type: "ensureTag", id: "tag", name: "nákup", color: null },
+      base
+    );
     db = reduce(
       db,
       {
@@ -477,7 +575,11 @@ describe("pravidla, vazby a nákup", () => {
       base
     );
     expect(byId(db.items, "cek")?.folderId).toBe(inbox.id);
-    db = reduce(db, { type: "setItemTags", itemId: "cek", tagIds: ["tag"] }, base);
+    db = reduce(
+      db,
+      { type: "setItemTags", itemId: "cek", tagIds: ["tag"] },
+      base
+    );
     expect(byId(db.items, "cek")?.folderId).toBe("dum");
   });
 
@@ -608,7 +710,9 @@ describe("úkol na řádek", () => {
     expect(itemIds).toHaveLength(3);
     const titles = itemIds.map((id) => byId(next.items, id)?.title);
     expect(titles).toEqual(["Koupit chleba", "Zavolat", "Napsat"]);
-    expect(itemIds.every((id) => byId(next.items, id)?.body == null)).toBe(true);
+    expect(itemIds.every((id) => byId(next.items, id)?.body == null)).toBe(
+      true
+    );
     expect(next.tags.filter((tag) => tag.name === "telefon")).toHaveLength(1);
     const orders = itemIds.map((id) => byId(next.items, id)?.sortOrder ?? "");
     expect(orders[0]! < orders[1]!).toBe(true);

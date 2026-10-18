@@ -26,8 +26,8 @@ import {
   statusesOf,
 } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
-import { planLabel } from "../domain/horizon.ts";
 import { pullHashtags, removeToken } from "../domain/hashtags.ts";
+import { planLabel } from "../domain/horizon.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
   indentOutline,
@@ -140,7 +140,10 @@ export function ItemTitle({
   const pendingCaret = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const editing = draft !== null;
-  const hint = useTagHint(item.type === "task" && draft !== null ? draft : "", caret);
+  const hint = useTagHint(
+    item.type === "task" && draft !== null ? draft : "",
+    caret
+  );
   useEffect(() => {
     if (!editing) return;
     const field = inputRef.current;
@@ -169,7 +172,12 @@ export function ItemTitle({
     }
     const pulled = pullHashtags(raw);
     const title = pulled.text.trim();
-    dispatchTaskText(db, item, title && title !== item.title ? { title } : {}, pulled.names);
+    dispatchTaskText(
+      db,
+      item,
+      title && title !== item.title ? { title } : {},
+      pulled.names
+    );
   };
   const pickTag = (name: string) => {
     if (!hint.token || draft === null) return;
@@ -180,7 +188,9 @@ export function ItemTitle({
     pendingCaret.current = nextCaret;
     setCaret(nextCaret);
     setDraft(nextDraft);
-    dispatchTaskText(db, item, title && title !== item.title ? { title } : {}, [name]);
+    dispatchTaskText(db, item, title && title !== item.title ? { title } : {}, [
+      name,
+    ]);
   };
   const frame = cx(
     "block min-w-0",
@@ -319,13 +329,19 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
   });
   const pickTag = (name: string) => {
     if (!hint.token) return;
-    const cleaned = removeToken(draftRef.current, hint.token.start, hint.token.end);
+    const cleaned = removeToken(
+      draftRef.current,
+      hint.token.start,
+      hint.token.end
+    );
     const body = cleaned.trim() ? cleaned.replace(/\s+$/, "") : null;
     const nextCaret = Math.min(hint.token.start, cleaned.length);
     cursor.current = nextCaret;
     setCaret(nextCaret);
     setDraft(cleaned);
-    dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, [name]);
+    dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, [
+      name,
+    ]);
     ref.current?.focus();
   };
   const finish = (save: boolean) => {
@@ -349,9 +365,14 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
     const body = pulled.names.length
       ? pulled.text || null
       : text.trim()
-        ? text.replace(/\s+$/, "")
-        : null;
-    dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, pulled.names);
+      ? text.replace(/\s+$/, "")
+      : null;
+    dispatchTaskText(
+      db,
+      item,
+      (item.body ?? null) === body ? {} : { body },
+      pulled.names
+    );
   };
   return (
     <div className="text-sm leading-5 text-muted">
@@ -413,9 +434,14 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
           const node = ref.current;
           window.setTimeout(() => {
             const active = document.activeElement;
-            if (active instanceof Element && active.closest("[role=listbox]")) return;
+            if (active instanceof Element && active.closest("[role=listbox]"))
+              return;
             if (node?.isConnected && active === node) return;
-            if (!node?.isConnected && document.querySelector("[data-task-body]")) return;
+            if (
+              !node?.isConnected &&
+              document.querySelector("[data-task-body]")
+            )
+              return;
             finish(save);
           }, 0);
         }}
@@ -540,6 +566,63 @@ export function TaskRow({
   const preview = bodyPreview(item.body);
 
   const toggle = () => toggleComplete(db, item, ui.askConfirm);
+  const [swipe, setSwipe] = useState(0);
+  const swipeRef = useRef(0);
+  const gesture = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    axis: "x" | "y" | null;
+  } | null>(null);
+  const swiped = useRef(false);
+
+  const trackSwipe = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "touch") return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest("input, button, a, textarea")) return;
+    gesture.current = {
+      id: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      axis: null,
+    };
+  };
+
+  const moveSwipe = (event: PointerEvent<HTMLDivElement>) => {
+    const current = gesture.current;
+    if (!current || event.pointerId !== current.id) return;
+    const dx = event.clientX - current.x;
+    const dy = event.clientY - current.y;
+    if (!current.axis) {
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      current.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+      if (current.axis === "y") {
+        gesture.current = null;
+        return;
+      }
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Prohlížeč pointer nepustí, gesto stejně doběhne.
+      }
+    }
+    const next = Math.max(-180, Math.min(180, dx));
+    swipeRef.current = next;
+    setSwipe(next);
+  };
+
+  const endSwipe = (event: PointerEvent<HTMLDivElement>) => {
+    const current = gesture.current;
+    if (!current || event.pointerId !== current.id) return;
+    gesture.current = null;
+    const dx = swipeRef.current;
+    swipeRef.current = 0;
+    setSwipe(0);
+    if (Math.abs(dx) < 96) return;
+    swiped.current = true;
+    toggle();
+  };
 
   return (
     <div
@@ -548,14 +631,10 @@ export function TaskRow({
         transform: CSS.Transform.toString(transform),
         transition,
         paddingLeft: 12 + depth * 20,
+        touchAction: "pan-y",
       }}
       className={cx(
-        "group flex cursor-grab items-center gap-3 rounded-md px-3 py-2 active:cursor-grabbing",
-        itemMarked(ui.picked, ui.selectedId, item.id)
-          ? "bg-accent/25 shadow-[inset_3px_0_0_var(--accent)]"
-          : striped
-          ? "bg-black/[0.03] hover:bg-black/5 dark:bg-white/[0.04] dark:hover:bg-white/10"
-          : "hover:bg-black/5 dark:hover:bg-white/10",
+        "group relative cursor-grab overflow-hidden rounded-md touch-pan-y active:cursor-grabbing",
         isDragging && "opacity-0"
       )}
       {...attributes}
@@ -568,111 +647,146 @@ export function TaskRow({
         if (event.shiftKey || event.metaKey || event.ctrlKey)
           event.preventDefault();
       }}
+      onPointerDown={trackSwipe}
+      onPointerMove={moveSwipe}
+      onPointerUp={endSwipe}
+      onPointerCancel={endSwipe}
       onClick={(event) => {
+        if (swiped.current) {
+          swiped.current = false;
+          return;
+        }
         if (dragClick()) return;
         clickItem(ui, item.id, event);
       }}
     >
-      <input
-        className="size-6 shrink-0 accent-[var(--accent)]"
-        type="checkbox"
-        checked={checked}
-        onPointerDown={keepControl}
-        onMouseDown={keepControl}
-        onTouchStart={keepControl}
-        onClick={keepControl}
-        onChange={toggle}
-        aria-label={checked ? "Označit jako otevřené" : "Označit jako hotové"}
-      />
-      <div className="flex min-w-0 flex-1 items-center gap-1">
-        <div className="w-full min-w-0 py-0.5 text-left">
-          <div className="flex w-full min-w-0 items-center gap-1.5">
-            <PriorityMark priority={item.priority} />
-            <ItemTitle
-              item={item}
-              struck={checked}
-              dragClick={dragClick}
-              className="h-6 min-w-0 flex-1 leading-6"
-            />
-          </div>
-          {ui.editingBodyId === item.id ? (
-            <TaskBodyEditor item={item} struck={checked} />
-          ) : (
-            preview && (
-              <p
-                className={cx(
-                  "mt-0.5 line-clamp-2 cursor-text text-sm leading-5 text-muted",
-                  checked && "line-through"
-                )}
-                onPointerDown={keepControl}
-                onMouseDown={keepControl}
-                onClick={(event) => {
-                  keepControl(event);
-                  ui.editBody(item.id);
-                }}
-              >
-                {preview}
-              </p>
-            )
-          )}
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-            {showFolder && folder && (
-              <span>
-                {folderTrail(db, folder.id).map((entry, index) => (
-                  <span key={entry.id}>
-                    {index > 0 && " / "}
-                    <Link
-                      href={
-                        entry.system === "inbox"
-                          ? "/inbox"
-                          : `/folder/${entry.id}`
-                      }
-                      className="hover:text-ink"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {entry.name}
-                    </Link>
-                  </span>
-                ))}
-              </span>
+      <div
+        aria-hidden
+        className="absolute inset-y-0 flex items-center overflow-hidden bg-accent px-3 text-sm whitespace-nowrap text-accent-ink"
+        style={{
+          width: Math.abs(swipe),
+          ...(swipe < 0
+            ? { right: 0, justifyContent: "flex-end" }
+            : { left: 0 }),
+        }}
+      >
+        {Math.abs(swipe) > 28 ? (checked ? "Otevřít" : "Hotovo") : ""}
+      </div>
+      <div
+        className={cx(
+          "flex items-center gap-3 px-3 py-2",
+          itemMarked(ui.picked, ui.selectedId, item.id)
+            ? "bg-[color-mix(in_srgb,var(--accent)_25%,var(--bg))] shadow-[inset_3px_0_0_var(--accent)]"
+            : striped
+            ? "bg-[color-mix(in_srgb,black_3%,var(--bg))] hover:bg-black/5 dark:bg-[color-mix(in_srgb,white_4%,var(--bg))] dark:hover:bg-white/10"
+            : "bg-bg hover:bg-black/5 dark:hover:bg-white/10"
+        )}
+        style={{
+          transform: `translateX(${swipe}px)`,
+          transition: swipe === 0 ? "transform 160ms ease" : "none",
+        }}
+      >
+        <input
+          className="size-6 shrink-0 accent-[var(--accent)]"
+          type="checkbox"
+          checked={checked}
+          onPointerDown={keepControl}
+          onMouseDown={keepControl}
+          onTouchStart={keepControl}
+          onClick={keepControl}
+          onChange={toggle}
+          aria-label={checked ? "Označit jako otevřené" : "Označit jako hotové"}
+        />
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <div className="w-full min-w-0 py-0.5 text-left">
+            <div className="flex w-full min-w-0 items-center gap-1.5">
+              <PriorityMark priority={item.priority} />
+              <ItemTitle
+                item={item}
+                struck={checked}
+                dragClick={dragClick}
+                className="h-6 min-w-0 flex-1 leading-6"
+              />
+            </div>
+            {ui.editingBodyId === item.id ? (
+              <TaskBodyEditor item={item} struck={checked} />
+            ) : (
+              preview && (
+                <p
+                  className={cx(
+                    "mt-0.5 line-clamp-2 cursor-text text-sm leading-5 text-muted",
+                    checked && "line-through"
+                  )}
+                  onPointerDown={keepControl}
+                  onMouseDown={keepControl}
+                  onClick={(event) => {
+                    keepControl(event);
+                    ui.editBody(item.id);
+                  }}
+                >
+                  {preview}
+                </p>
+              )
             )}
-            {middle && status && (
-              <span className="rounded-sm bg-accent-soft px-1.5 text-accent">
-                {status.name}
-              </span>
-            )}
-            {due && (
-              <span className={overdue ? "text-danger" : ""}>
-                {formatDay(due, today)}
-              </span>
-            )}
-            {item.plannedFor &&
-              (item.plannedFor !== due ||
-                (item.planUntil != null &&
-                  item.planUntil > item.plannedFor)) && (
+            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+              {showFolder && folder && (
                 <span>
-                  plán {planLabel(item.plannedFor, item.planUntil, today)}
+                  {folderTrail(db, folder.id).map((entry, index) => (
+                    <span key={entry.id}>
+                      {index > 0 && " / "}
+                      <Link
+                        href={
+                          entry.system === "inbox"
+                            ? "/inbox"
+                            : `/folder/${entry.id}`
+                        }
+                        className="hover:text-ink"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {entry.name}
+                      </Link>
+                    </span>
+                  ))}
                 </span>
               )}
-            {item.store && <span>{item.store}</span>}
-            {item.quantity && (
-              <span>
-                {item.quantity}
-                {item.unit ? ` ${item.unit}` : ""}
-              </span>
-            )}
-            {repeat && <span>{repeat}</span>}
-            {blocked && <span>čeká</span>}
-            {children.length > 0 && (
-              <span>
-                {children.filter((child) => !isOpenItem(db, child)).length}/
-                {children.length}
-              </span>
-            )}
-            {tags.map((tag) => (
-              <span key={tag.id}>#{tag.name}</span>
-            ))}
-          </span>
+              {middle && status && (
+                <span className="rounded-sm bg-accent-soft px-1.5 text-accent">
+                  {status.name}
+                </span>
+              )}
+              {due && (
+                <span className={overdue ? "text-danger" : ""}>
+                  {formatDay(due, today)}
+                </span>
+              )}
+              {item.plannedFor &&
+                (item.plannedFor !== due ||
+                  (item.planUntil != null &&
+                    item.planUntil > item.plannedFor)) && (
+                  <span>
+                    plán {planLabel(item.plannedFor, item.planUntil, today)}
+                  </span>
+                )}
+              {item.store && <span>{item.store}</span>}
+              {item.quantity && (
+                <span>
+                  {item.quantity}
+                  {item.unit ? ` ${item.unit}` : ""}
+                </span>
+              )}
+              {repeat && <span>{repeat}</span>}
+              {blocked && <span>čeká</span>}
+              {children.length > 0 && (
+                <span>
+                  {children.filter((child) => !isOpenItem(db, child)).length}/
+                  {children.length}
+                </span>
+              )}
+              {tags.map((tag) => (
+                <span key={tag.id}>#{tag.name}</span>
+              ))}
+            </span>
+          </div>
         </div>
       </div>
     </div>
@@ -716,7 +830,8 @@ function TaskComposer({ folder }: { folder: Folder }) {
     token?.kind === "tag" && !tagQueryExact(db, token.query)
       ? suggestTags(db, token.query)
       : [];
-  const open = token?.kind === "tag" && dismissedKey !== tokenKey && tags.length > 0;
+  const open =
+    token?.kind === "tag" && dismissedKey !== tokenKey && tags.length > 0;
   const picked = Math.min(highlight, Math.max(tags.length - 1, 0));
   useEffect(() => {
     setHighlight(0);
