@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { dispatch, useSnap } from "../data/store.tsx";
 import { formatDay, todayKey } from "../domain/dates.ts";
 import { byId, inboxFolder, resolvedOpen } from "../domain/db.ts";
+import { newItem } from "../domain/factory.ts";
+import { splitNoteDraft } from "../domain/noteIntent.ts";
 import type { DateRole } from "../domain/op.ts";
 import {
   lineAt,
@@ -23,14 +25,15 @@ import {
   suggestFolders,
 } from "../domain/select.ts";
 import { Dot } from "./folders.tsx";
-import { useUi } from "./state.tsx";
-import { Button, control, cx, Dialog } from "./ui.tsx";
+import { useUi, type QuickKind } from "./state.tsx";
+import { Button, control, cx, Dialog, TagMark } from "./ui.tsx";
 
 export function QuickAdd() {
   const { db } = useSnap();
   const ui = useUi();
   const quick = ui.quick;
   const [text, setText] = useState(quick?.text ?? "");
+  const [kind, setKind] = useState<QuickKind>(quick?.kind ?? "task");
   const [caret, setCaret] = useState((quick?.text ?? "").length);
   const [role, setRole] = useState<DateRole>("due");
   const [folderOverride, setFolderOverride] = useState<string | null>(null);
@@ -87,7 +90,36 @@ export function QuickAdd() {
     setText(`${text.slice(0, line.start)}${next}${text.slice(line.end)}`);
   };
 
+  const submitNote = () => {
+    const inbox = inboxFolder(db);
+    if (!inbox) return;
+    const draft = splitNoteDraft(text);
+    if (!draft) return;
+    const folder = byId(db.folders, quick.folderId) ?? inbox;
+    const id = nanoid(10);
+    const next = dispatch({
+      type: "createItem",
+      item: newItem({
+        id,
+        folderId: folder.id,
+        title: draft.title,
+        body: draft.body,
+        type: "note",
+        statusId: resolvedOpen(db, folder)?.id ?? null,
+        applyRules: false,
+      }),
+    });
+    if (!byId(next.items, id)) return;
+    ui.pushToast("Poznámka uložena", true);
+    ui.select(id);
+    ui.closeQuick();
+  };
+
   const submit = () => {
+    if (kind === "note") {
+      submitNote();
+      return;
+    }
     const inbox = inboxFolder(db);
     if (!inbox) return;
     const folderId = folderOverride ?? quick.folderId ?? inbox.id;
@@ -133,7 +165,7 @@ export function QuickAdd() {
   const acceptTag = (tag: TagHint) => acceptToken(`#${tag.name}`);
 
   const onSuggestKey = (event: KeyboardEvent) => {
-    if (!suggesting || event.defaultPrevented) return false;
+    if (kind === "note" || !suggesting || event.defaultPrevented) return false;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
@@ -170,16 +202,45 @@ export function QuickAdd() {
 
   return (
     <Dialog
-      title="Nová položka"
+      title={kind === "note" ? "Nová poznámka" : "Nová položka"}
       onClose={ui.closeQuick}
       onConfirm={submit}
       onKeyDown={onSuggestKey}
     >
+      <div
+        className="mb-3 flex rounded-md bg-black/5 p-0.5 dark:bg-white/10"
+        role="group"
+        aria-label="Co přidat"
+      >
+        {(
+          [
+            ["task", "Úkol"],
+            ["note", "Poznámka"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={kind === value}
+            className={cx(
+              "flex-1 rounded-sm px-3 py-1.5 text-sm",
+              kind === value
+                ? "bg-accent text-accent-ink"
+                : "text-muted hover:text-ink"
+            )}
+            onClick={() => setKind(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <textarea
         ref={area}
         autoFocus
         className={`${control} min-h-28`}
-        placeholder="Jeden úkol na řádek."
+        placeholder={
+          kind === "note" ? "První řádek je název." : "Jeden úkol na řádek."
+        }
         value={text}
         onChange={(event) => {
           setText(event.target.value);
@@ -190,7 +251,7 @@ export function QuickAdd() {
           if (onSuggestKey(event.nativeEvent)) event.stopPropagation();
         }}
       />
-      {suggesting && token?.kind === "folder" && (
+      {kind === "task" && suggesting && token?.kind === "folder" && (
         <div
           role="listbox"
           aria-label="Složky"
@@ -218,7 +279,7 @@ export function QuickAdd() {
           ))}
         </div>
       )}
-      {suggesting && token?.kind === "tag" && (
+      {kind === "task" && suggesting && token?.kind === "tag" && (
         <div
           role="listbox"
           aria-label="Tagy"
@@ -240,11 +301,12 @@ export function QuickAdd() {
               onMouseEnter={() => setHighlight(index)}
               onClick={() => acceptTag(tag)}
             >
-              <span className="min-w-0 truncate text-accent">#{tag.name}</span>
+              <TagMark name={tag.name} color={tag.color} />
             </button>
           ))}
         </div>
       )}
+      {kind === "task" && (
       <div className="mt-3 flex flex-wrap gap-1">
         {parsed.chips
           .filter(
@@ -274,7 +336,8 @@ export function QuickAdd() {
             </button>
           ))}
       </div>
-      {parsed.dueDay && (
+      )}
+      {kind === "task" && parsed.dueDay && (
         <div className="mt-3 flex gap-2">
           <Button
             tone={role === "due" ? "soft" : "ghost"}
@@ -290,7 +353,7 @@ export function QuickAdd() {
           </Button>
         </div>
       )}
-      {suggestions.length > 0 && (
+      {kind === "task" && suggestions.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
           {suggestions.map((folder) => (
             <Button
@@ -308,18 +371,24 @@ export function QuickAdd() {
       <p className="mt-3 text-xs text-muted">
         {folderTrail(
           db,
-          parsed.folderId ??
-            folderOverride ??
-            quick.folderId ??
-            inboxFolder(db)?.id ??
-            null
+          kind === "note"
+            ? quick.folderId ?? inboxFolder(db)?.id ?? null
+            : parsed.folderId ??
+              folderOverride ??
+              quick.folderId ??
+              inboxFolder(db)?.id ??
+              null
         )
           .map((part) => part.name)
           .join(" / ") || "Nezařazené"}
-        {" · "}
-        {activeFolders(db).length > 0
-          ? "Složku najdeš lomítkem nebo slovem složka, štítek mřížkou, hashtagem nebo štítkem. Čas třeba v 9 hodin. Šipky a Enter vyberou našeptanou."
-          : ""}
+        {kind === "task" && activeFolders(db).length > 0 && (
+          <>
+            {" · "}
+            Složku najdeš lomítkem nebo slovem složka, štítek mřížkou, hashtagem
+            nebo štítkem. Čas třeba v 9 hodin. Šipky a Enter vyberou našeptanou.
+          </>
+        )}
+        {kind === "note" && " · První řádek je název, zbytek text poznámky."}
       </p>
       <div className="mt-4 flex justify-end">
         <Button tone="solid" data-primary onClick={submit}>

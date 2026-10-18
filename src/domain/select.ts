@@ -4,14 +4,13 @@ import {
   descendantFolderIds,
   inboxFolder,
   isClosedOut,
-  isDoneStatus,
   resolvedClosed,
   resolvedOpen,
   statusesOf,
   statusMeaning,
 } from "./db.ts";
 import { byOrder } from "./ordering.ts";
-import { dueDateKey } from "./dates.ts";
+import { addDays, dueDateKey } from "./dates.ts";
 import { planIsDue } from "./horizon.ts";
 import { fold, words } from "./text.ts";
 import type { Db, Folder, Item, SavedView, Status, ViewQuery } from "./types.ts";
@@ -100,6 +99,24 @@ export function tagsOf(db: Db, itemId: string) {
   return alive(db.tags).filter((tag) => ids.has(tag.id)).sort((a, b) => a.name.localeCompare(b.name, "cs"));
 }
 
+export function tagItems(db: Db, tagId: string): Item[] {
+  const ids = new Set(
+    alive(db.itemTags)
+      .filter((link) => link.tagId === tagId)
+      .map((link) => link.itemId),
+  );
+  return visibleItems(db).filter((item) => ids.has(item.id)).sort(byOrder);
+}
+
+export function searchTags(db: Db, query: string) {
+  const needle = fold(query).trim().replace(/^#+/, "");
+  if (!needle) return [];
+  return alive(db.tags)
+    .filter((tag) => fold(tag.name).includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name, "cs"))
+    .slice(0, 6);
+}
+
 export function linksOf(db: Db, itemId: string) {
   return alive(db.itemLinks).filter((link) => link.fromId === itemId || link.toId === itemId);
 }
@@ -126,39 +143,63 @@ export function blockedItems(db: Db, itemId: string): Item[] {
     .filter((item): item is Item => item !== null && !item.isDeleted);
 }
 
-export function isReady(db: Db, item: Item): boolean {
+function isReady(db: Db, item: Item): boolean {
   return item.type === "task" && isOpenItem(db, item) && blockingItems(db, item.id).length === 0;
 }
 
-export function readyItems(db: Db): Item[] {
-  return visibleItems(db).filter((item) => isReady(db, item));
-}
+const SOON_DAYS = 7;
 
-export type TodaySections = {
-  planned: Item[];
-  due: Item[];
-  overdue: Item[];
-};
+export type FocusId = "overdue" | "today" | "soon" | "priority" | "ready";
 
-export function todaySections(db: Db, today: string): TodaySections {
-  const planned: Item[] = [];
-  const due: Item[] = [];
+export function focusSections(db: Db, today: string): { id: FocusId; items: Item[] }[] {
+  const until = addDays(today, SOON_DAYS);
   const overdue: Item[] = [];
+  const dueToday: Item[] = [];
+  const soon: Item[] = [];
+  const priority: Item[] = [];
+  const ready: Item[] = [];
   for (const item of visibleItems(db)) {
     if (item.type !== "task" || !isOpenItem(db, item)) continue;
-    const dueKey = dueDateKey(item.dueAt);
-    if (planIsDue(item.plannedFor, item.planUntil, today)) {
-      planned.push(item);
+    const due = dueDateKey(item.dueAt);
+    if (due && due < today) {
+      overdue.push(item);
       continue;
     }
-    if (dueKey === today) due.push(item);
-    else if (dueKey && dueKey < today) overdue.push(item);
+    if (due === today || planIsDue(item.plannedFor, item.planUntil, today)) {
+      dueToday.push(item);
+      continue;
+    }
+    if (soonKey(item, today, until)) {
+      soon.push(item);
+      continue;
+    }
+    if (item.priority === "urgent" || item.priority === "high") {
+      priority.push(item);
+      continue;
+    }
+    if (isReady(db, item)) ready.push(item);
   }
   const byDue = (a: Item, b: Item) => (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || byOrder(a, b);
-  planned.sort(byOrder);
-  due.sort(byDue);
   overdue.sort(byDue);
-  return { planned, due, overdue };
+  dueToday.sort(byDue);
+  soon.sort((a, b) => (soonKey(a, today, until) ?? "").localeCompare(soonKey(b, today, until) ?? "") || byOrder(a, b));
+  priority.sort((a, b) => Number(a.priority !== "urgent") - Number(b.priority !== "urgent") || byOrder(a, b));
+  ready.sort(byOrder);
+  return [
+    { id: "overdue" as const, items: overdue },
+    { id: "today" as const, items: dueToday },
+    { id: "soon" as const, items: soon },
+    { id: "priority" as const, items: priority },
+    { id: "ready" as const, items: ready },
+  ].filter((section) => section.items.length > 0);
+}
+
+function soonKey(item: Item, today: string, until: string): string | null {
+  const marks = [dueDateKey(item.dueAt), item.plannedFor].filter(
+    (key): key is string => Boolean(key && key > today && key <= until),
+  );
+  marks.sort();
+  return marks[0] ?? null;
 }
 
 export function searchItems(db: Db, query: string): Item[] {
@@ -167,7 +208,7 @@ export function searchItems(db: Db, query: string): Item[] {
   return visibleItems(db)
     .filter((item) => {
       const tagNames = tagsOf(db, item.id).map((tag) => tag.name).join(" ");
-      return fold(`${item.title}\n${item.body ?? ""}\n${item.store ?? ""}\n${tagNames}`).includes(needle);
+      return fold(`${item.title}\n${item.body ?? ""}\n${tagNames}`).includes(needle);
     })
     .slice(0, 40);
 }
@@ -208,7 +249,6 @@ export function applyQuery(db: Db, query: ViewQuery): Item[] {
       if (query.type && item.type !== query.type) return false;
       if (query.openOnly && !isOpenItem(db, item)) return false;
       if (query.assigneeId && item.assigneeId !== query.assigneeId) return false;
-      if (query.store && fold(item.store ?? "") !== fold(query.store)) return false;
       if (query.tagId && !tagsOf(db, item.id).some((tag) => tag.id === query.tagId)) return false;
       if (query.text && !fold(`${item.title}\n${item.body ?? ""}`).includes(fold(query.text))) return false;
       return true;
@@ -220,18 +260,6 @@ export function personItems(db: Db, personId: string): Item[] {
   return visibleItems(db)
     .filter((item) => item.assigneeId === personId && item.type === "task")
     .sort(byOrder);
-}
-
-export function shoppingOpen(db: Db): Item[] {
-  return visibleItems(db)
-    .filter((item) => item.type === "task" && isOpenItem(db, item) && (item.store || item.templateId))
-    .sort(byOrder);
-}
-
-export function shoppingDone(db: Db): Item[] {
-  return visibleItems(db)
-    .filter((item) => item.type === "task" && isDoneStatus(db, item.statusId) && (item.store || item.templateId))
-    .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
 }
 
 export function openTaskCount(db: Db, folderId: string): number {

@@ -14,11 +14,6 @@ export function newItem(init: {
   dueHasTime?: boolean;
   plannedFor?: string | null;
   planUntil?: string | null;
-  store?: string | null;
-  quantity?: string | null;
-  unit?: string | null;
-  spec?: string | null;
-  templateId?: string | null;
   parentItemId?: string | null;
   applyRules?: boolean;
   tagIds?: string[];
@@ -37,11 +32,6 @@ export function newItem(init: {
     dueHasTime: init.dueHasTime ?? false,
     plannedFor: init.plannedFor ?? null,
     planUntil: init.planUntil ?? null,
-    store: init.store ?? null,
-    quantity: init.quantity ?? null,
-    unit: init.unit ?? null,
-    spec: init.spec ?? null,
-    templateId: init.templateId ?? null,
     parentItemId: init.parentItemId ?? null,
     applyRules: init.applyRules ?? true,
     tagIds: init.tagIds ?? [],

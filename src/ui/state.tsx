@@ -7,10 +7,12 @@ import {
   type ReactNode,
 } from "react";
 
+export type QuickKind = "task" | "note";
 export type QuickState = {
   folderId: string | null;
   statusId: string | null;
   text: string;
+  kind: QuickKind;
 };
 export type FolderEdit = { id: string | null; parentId: string | null };
 export type ConfirmState = {
@@ -102,6 +104,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
           folderId: prefill?.folderId ?? null,
           statusId: prefill?.statusId ?? null,
           text: prefill?.text ?? "",
+          kind: prefill?.kind ?? "task",
         }),
       closeQuick: () => setQuick(null),
       searchOpen,
@@ -196,9 +199,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
 function readShowDone() {
   try {
-    return sessionStorage.getItem("ukoly-show-done") === "1";
+    return sessionStorage.getItem("ukoly-show-done") !== "0";
   } catch {
-    return false;
+    return true;
   }
 }
 

@@ -9,6 +9,6 @@ describe("barva složky", () => {
     expect(normalizeFolderColor(null)).toBeNull();
     expect(paintCss("c1")).toBe("var(--c1)");
     expect(paintCss("#aabbcc")).toBe("#aabbcc");
-    expect(paintCss(null)).toBe("var(--c1)");
+    expect(paintCss(null)).toBe("var(--c4)");
   });
 });

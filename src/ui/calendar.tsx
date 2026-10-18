@@ -144,7 +144,7 @@ function DayItems({ items }: { items: Item[] }) {
             "flex w-full items-center gap-2 px-2 py-1.5 text-left",
             hoverRow,
             itemMarked(ui.picked, ui.selectedId, item.id) &&
-              "bg-accent/25 shadow-[inset_3px_0_0_var(--accent)]"
+              "bg-accent/25"
           )}
           onMouseDown={(event) => {
             if (event.shiftKey) event.preventDefault();

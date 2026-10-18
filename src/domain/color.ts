@@ -1,5 +1,7 @@
 import { FOLDER_COLORS, type FolderColor } from "./types.ts";
 
+export const DEFAULT_FOLDER_COLOR: FolderColor = "c4";
+
 export type FolderPaint = FolderColor | `#${string}`;
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -17,7 +19,7 @@ export function normalizeFolderColor(color: string | null | undefined): FolderPa
 
 export function paintCss(color: string | null | undefined): string {
   const paint = normalizeFolderColor(color);
-  if (!paint) return "var(--c1)";
+  if (!paint) return `var(--${DEFAULT_FOLDER_COLOR})`;
   if (isPaletteColor(paint)) return `var(--${paint})`;
   return paint;
 }

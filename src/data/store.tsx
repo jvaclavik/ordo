@@ -1,13 +1,13 @@
 import { openDB, type IDBPDatabase } from "idb";
 import { nanoid } from "nanoid";
 import { useSyncExternalStore } from "react";
-import { isValidDb, withPlan } from "../domain/db.ts";
 import { todayKey } from "../domain/dates.ts";
+import { isValidDb, withPlan } from "../domain/db.ts";
 import type { Op } from "../domain/op.ts";
 import { freshDb, reduce } from "../domain/reduce.ts";
 import type { Ctx, Db } from "../domain/types.ts";
-import { fingerprint } from "./syncMap.ts";
 import { noteLocal, startSync } from "./sync.ts";
+import { collapseInboxes, fingerprint, isUntouched, mergeLatest } from "./syncMap.ts";
 
 export type Snap = {
   ready: boolean;
@@ -30,7 +30,11 @@ let snap: Snap = {
 };
 
 function runtime(): Ctx {
-  return { now: new Date().toISOString(), today: todayKey(), id: () => nanoid(10) };
+  return {
+    now: new Date().toISOString(),
+    today: todayKey(),
+    id: () => nanoid(10),
+  };
 }
 
 function emit() {
@@ -62,7 +66,12 @@ export function dispatch(op: Op): Db {
 export function undo() {
   const previous = snap.past.at(-1);
   if (!previous) return;
-  snap = { ...snap, db: previous, past: snap.past.slice(0, -1), future: [...snap.future, snap.db] };
+  snap = {
+    ...snap,
+    db: previous,
+    past: snap.past.slice(0, -1),
+    future: [...snap.future, snap.db],
+  };
   emit();
   queuePersist();
 }
@@ -70,7 +79,12 @@ export function undo() {
 export function redo() {
   const next = snap.future.at(-1);
   if (!next) return;
-  snap = { ...snap, db: next, future: snap.future.slice(0, -1), past: [...snap.past, snap.db] };
+  snap = {
+    ...snap,
+    db: next,
+    future: snap.future.slice(0, -1),
+    past: [...snap.past, snap.db],
+  };
   emit();
   queuePersist();
 }
@@ -85,10 +99,21 @@ let database: IDBPDatabase | null = null;
 function queuePersist() {
   if (!snap.ready) return;
   window.clearTimeout(timer);
-  timer = window.setTimeout(() => {
-    if (!snap.memoryOnly && database) void persist();
-    noteLocal(snap.db);
-  }, 40);
+  timer = window.setTimeout(flushPersist, 40);
+}
+
+function flushPersist() {
+  window.clearTimeout(timer);
+  if (!snap.ready) return;
+  if (!snap.memoryOnly && database) void persist();
+  noteLocal(snap.db);
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", flushPersist);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPersist();
+  });
 }
 
 async function persist() {
@@ -100,7 +125,10 @@ async function persist() {
       emit();
     }
   } catch (error) {
-    snap = { ...snap, persistError: error instanceof Error ? error.message : "Uložení selhalo." };
+    snap = {
+      ...snap,
+      persistError: error instanceof Error ? error.message : "Uložení selhalo.",
+    };
     emit();
   }
 }
@@ -116,7 +144,9 @@ export function loadStore() {
         },
       });
       const stored = await database.get("kv", "state");
-      const local = isValidDb(stored) ? withPlan(stored) : null;
+      const local = isValidDb(stored)
+        ? collapseInboxes(withPlan(stored))
+        : null;
       snap = {
         ...snap,
         ready: true,
@@ -125,16 +155,26 @@ export function loadStore() {
       };
       emit();
       try {
-        await startSync(local, (db) => {
-          if (fingerprint(db) === fingerprint(snap.db)) return;
-          snap = { ...snap, db, past: [], future: [] };
-          emit();
-          void persist();
-        });
+        await startSync(
+          () => snap.db,
+          (incoming) => {
+            const merged = isUntouched(snap.db)
+              ? incoming
+              : collapseInboxes(mergeLatest(incoming, snap.db));
+            if (fingerprint(merged) !== fingerprint(incoming)) noteLocal(merged);
+            if (fingerprint(merged) === fingerprint(snap.db)) return;
+            snap = { ...snap, db: merged, past: [], future: [] };
+            emit();
+            void persist();
+          }
+        );
       } catch (error) {
         snap = {
           ...snap,
-          persistError: error instanceof Error ? error.message : "Synchronizace se nepovedla.",
+          persistError:
+            error instanceof Error
+              ? error.message
+              : "Synchronizace se nepovedla.",
         };
         emit();
       }

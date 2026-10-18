@@ -34,8 +34,8 @@ export type Op =
   | { type: "placeItem"; id: string; folderId: string; statusId: string; sortOrder: string }
   | { type: "deleteItem"; id: string }
   | { type: "restoreItem"; id: string }
-  | { type: "ensureTag"; id: string; name: string; color: FolderColor | null }
-  | { type: "updateTag"; id: string; name?: string; color?: FolderColor | null }
+  | { type: "ensureTag"; id: string; name: string; color: FolderPaint | null }
+  | { type: "updateTag"; id: string; name?: string; color?: FolderPaint | null }
   | { type: "deleteTag"; id: string }
   | { type: "setItemTags"; itemId: string; tagIds: string[] }
   | { type: "createPerson"; id: string; name: string; color: FolderColor | null; emoji: string | null }
@@ -45,11 +45,6 @@ export type Op =
   | { type: "removeDependency"; id: string }
   | { type: "addLink"; id: string; fromId: string; toId: string; kind: LinkKind }
   | { type: "removeLink"; id: string }
-  | { type: "makeTemplate"; id: string; itemId: string }
-  | { type: "createTemplate"; id: string; name: string; store: string | null; unit: string | null; spec: string | null; defaultQuantity: string | null; folderId: string | null }
-  | { type: "updateTemplate"; id: string; name?: string; store?: string | null; unit?: string | null; spec?: string | null; defaultQuantity?: string | null; folderId?: string | null }
-  | { type: "deleteTemplate"; id: string }
-  | { type: "buyTemplate"; templateId: string; itemId: string }
   | { type: "createView"; id: string; name: string; folderId: string | null; query: ViewQuery }
   | { type: "deleteView"; id: string }
   | {
@@ -60,7 +55,6 @@ export type Op =
       actionFolderId: string;
       actionStatusId: string | null;
       actionTagId: string | null;
-      actionStore: string | null;
     }
   | {
       type: "updateRule";
@@ -71,7 +65,6 @@ export type Op =
       actionFolderId?: string;
       actionStatusId?: string | null;
       actionTagId?: string | null;
-      actionStore?: string | null;
     }
   | { type: "deleteRule"; id: string }
   | { type: "reorderRules"; orderedIds: string[] }

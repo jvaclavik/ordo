@@ -398,7 +398,7 @@ describe("opakování", () => {
   });
 });
 
-describe("pravidla, vazby a nákup", () => {
+describe("pravidla a vazby", () => {
   it("zařadí nezařazené podle pravidla", () => {
     const base = ctx();
     let db = freshDb(base);
@@ -426,7 +426,6 @@ describe("pravidla, vazby a nákup", () => {
         actionFolderId: "zdravi",
         actionStatusId: null,
         actionTagId: null,
-        actionStore: null,
       },
       base
     );
@@ -537,7 +536,6 @@ describe("pravidla, vazby a nákup", () => {
         actionFolderId: "dum",
         actionStatusId: null,
         actionTagId: null,
-        actionStore: null,
       },
       base
     );
@@ -570,7 +568,6 @@ describe("pravidla, vazby a nákup", () => {
         actionFolderId: "dum",
         actionStatusId: null,
         actionTagId: null,
-        actionStore: null,
       },
       base
     );
@@ -630,62 +627,6 @@ describe("pravidla, vazby a nákup", () => {
       base
     );
     expect(byId(db.folders, "parent")?.parentId).toBeNull();
-  });
-
-  it("neshodí obvyklou položku podruhé, dokud není koupená", () => {
-    const base = ctx();
-    let db = freshDb(base);
-    const inbox = db.folders[0]!;
-    db = run(
-      db,
-      [
-        {
-          type: "createItem",
-          item: newItem({
-            id: "mleko",
-            folderId: inbox.id,
-            title: "Mléko",
-            store: "Potraviny",
-          }),
-        },
-        { type: "makeTemplate", id: "tpl", itemId: "mleko" },
-        { type: "makeTemplate", id: "tpl2", itemId: "mleko" },
-      ],
-      base
-    );
-    expect(db.shoppingTemplates.filter((row) => !row.isDeleted)).toHaveLength(
-      1
-    );
-    db = reduce(
-      db,
-      { type: "buyTemplate", templateId: "tpl", itemId: "buy1" },
-      base
-    );
-    expect(byId(db.items, "buy1")).toBeNull();
-    const closed = resolvedClosed(db, inbox)!;
-    db = reduce(
-      db,
-      {
-        type: "placeItem",
-        id: "mleko",
-        folderId: inbox.id,
-        statusId: closed.id,
-        sortOrder: "b",
-      },
-      base
-    );
-    db = reduce(
-      db,
-      { type: "buyTemplate", templateId: "tpl", itemId: "buy2" },
-      base
-    );
-    db = reduce(
-      db,
-      { type: "buyTemplate", templateId: "tpl", itemId: "buy3" },
-      base
-    );
-    expect(byId(db.items, "buy2")?.title).toBe("Mléko");
-    expect(byId(db.items, "buy3")).toBeNull();
   });
 });
 

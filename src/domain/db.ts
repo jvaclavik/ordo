@@ -120,7 +120,6 @@ export function emptyDb(): Db {
     people: [],
     dependencies: [],
     itemLinks: [],
-    shoppingTemplates: [],
     savedViews: [],
     rules: [],
   };
@@ -169,13 +168,26 @@ export function seriesIdOf(item: Item): string {
   return item.seriesId ?? item.id;
 }
 
+function omitKeys<T extends object>(value: T, keys: readonly string[]): T {
+  const next = { ...value } as Record<string, unknown>;
+  for (const key of keys) delete next[key];
+  return next as T;
+}
+
 export function withPlan(db: Db): Db {
-  if (db.items.every((item) => item.planUntil !== undefined)) return db;
   return {
-    ...db,
+    ...omitKeys(db, ["shoppingTemplates"]),
     items: db.items.map((item) =>
-      item.planUntil !== undefined ? item : { ...item, planUntil: null }
+      omitKeys(
+        { ...item, planUntil: item.planUntil ?? null },
+        ["store", "quantity", "unit", "spec", "templateId"]
+      )
     ),
+    rules: db.rules.map((rule) => omitKeys(rule, ["actionStore"])),
+    savedViews: db.savedViews.map((view) => ({
+      ...view,
+      query: omitKeys(view.query, ["store"]),
+    })),
   };
 }
 
@@ -193,7 +205,6 @@ export function isValidDb(value: unknown): value is Db {
     Array.isArray(record.people) &&
     Array.isArray(record.dependencies) &&
     Array.isArray(record.itemLinks) &&
-    Array.isArray(record.shoppingTemplates) &&
     Array.isArray(record.savedViews) &&
     Array.isArray(record.rules)
   );

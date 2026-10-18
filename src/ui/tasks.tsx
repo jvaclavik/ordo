@@ -5,7 +5,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ListFilter, Plus } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronsUp,
+  ChevronUp,
+  ListFilter,
+  Plus,
+} from "lucide-react";
 import { nanoid } from "nanoid";
 import {
   useEffect,
@@ -28,6 +34,7 @@ import {
 import { newItem } from "../domain/factory.ts";
 import { pullHashtags, removeToken } from "../domain/hashtags.ts";
 import { planLabel } from "../domain/horizon.ts";
+import { priorityLabel } from "../domain/labels.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
   indentOutline,
@@ -46,16 +53,18 @@ import {
   folderTrail,
   isChecked,
   isOpenItem,
+  mapStatus,
   subtasksOf,
+  suggestFolders,
   tagsOf,
 } from "../domain/select.ts";
-import type { Folder, Item, Status } from "../domain/types.ts";
+import type { Folder, Item, Priority, Status } from "../domain/types.ts";
 import { useBoardSlot } from "./boardDrop.ts";
 import { LinkedText } from "./links.tsx";
-import { completionOps } from "./move.ts";
+import { completionOps, placeOp } from "./move.ts";
 import { useUi, type ConfirmState } from "./state.tsx";
 import { dispatchTaskText, TagMenu, useTagHint } from "./tagHint.tsx";
-import { cx, PriorityMark, useDragDisplaced } from "./ui.tsx";
+import { cx, TagMark, useDragDisplaced } from "./ui.tsx";
 
 export function visibleTaskIds(): string[] {
   const ids: string[] = [];
@@ -465,6 +474,128 @@ function keepControl(
   event.stopPropagation();
 }
 
+const PRIORITY_LADDER = ["low", null, "high", "urgent"] as const;
+
+function priorityIndex(priority: Priority | null) {
+  const index = PRIORITY_LADDER.indexOf(priority);
+  return index === -1 ? 1 : index;
+}
+
+function priorityNext(priority: Priority | null): Priority | null {
+  const index = priorityIndex(priority);
+  return PRIORITY_LADDER[(index + 1) % PRIORITY_LADDER.length] ?? null;
+}
+
+function PriorityGlyph({ priority }: { priority: Priority | null }) {
+  if (priority === "urgent")
+    return (
+      <ChevronsUp
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#d23b32] dark:text-[#ff6d60]"
+      />
+    );
+  if (priority === "high")
+    return (
+      <ChevronUp
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#c8960a] dark:text-[#f0c14a]"
+      />
+    );
+  if (priority === "low")
+    return (
+      <ChevronDown
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#2f8a3c] dark:text-[#7dca78]"
+      />
+    );
+  return <span className="size-1.5 rounded-full bg-muted" />;
+}
+
+function PriorityNudge({ item }: { item: Item }) {
+  const [live, setLive] = useState<Priority | null | undefined>(undefined);
+  const origin = useRef<{ y: number; index: number } | null>(null);
+  const dragged = useRef(false);
+  const shown = live === undefined ? item.priority : live;
+  const write = (priority: Priority | null) => {
+    if (priority === item.priority) return;
+    dispatch({
+      type: "updateItem",
+      id: item.id,
+      patch: { priority },
+    });
+  };
+  return (
+    <button
+      type="button"
+      aria-label={`Priorita ${priorityLabel(shown)}. Táhni nahoru nebo dolů.`}
+      title="Táhni nahoru pro vyšší prioritu"
+      className="relative grid h-10 w-8 shrink-0 cursor-ns-resize touch-none place-items-center"
+      onPointerDown={(event) => {
+        keepControl(event);
+        if (event.button !== 0) return;
+        origin.current = {
+          y: event.clientY,
+          index: priorityIndex(item.priority),
+        };
+        dragged.current = false;
+        setLive(item.priority);
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Prohlížeč pointer nepustí, gesto stejně doběhne.
+        }
+      }}
+      onPointerMove={(event) => {
+        const start = origin.current;
+        if (!start) return;
+        const delta = start.y - event.clientY;
+        if (Math.abs(delta) > 8) dragged.current = true;
+        const index = Math.min(
+          PRIORITY_LADDER.length - 1,
+          Math.max(0, start.index + Math.round(delta / 22))
+        );
+        setLive(PRIORITY_LADDER[index] ?? null);
+      }}
+      onPointerUp={(event) => {
+        const start = origin.current;
+        origin.current = null;
+        if (!start) return;
+        const delta = start.y - event.clientY;
+        if (Math.abs(delta) >= 8) {
+          const index = Math.min(
+            PRIORITY_LADDER.length - 1,
+            Math.max(0, start.index + Math.round(delta / 22))
+          );
+          write(PRIORITY_LADDER[index] ?? null);
+        }
+        setLive(undefined);
+      }}
+      onPointerCancel={() => {
+        origin.current = null;
+        setLive(undefined);
+      }}
+      onClick={(event) => {
+        keepControl(event);
+        if (dragged.current) {
+          dragged.current = false;
+          return;
+        }
+        write(priorityNext(item.priority));
+      }}
+    >
+      {live !== undefined && (
+        <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 -translate-x-1/2 rounded-sm bg-raised px-1.5 py-0.5 text-xs whitespace-nowrap text-ink shadow-[var(--shadow)]">
+          {priorityLabel(shown)}
+        </span>
+      )}
+      <PriorityGlyph priority={shown} />
+    </button>
+  );
+}
+
 export function toggleComplete(
   db: Parameters<typeof completionOps>[0],
   item: Item,
@@ -525,6 +656,96 @@ export function askDeleteItems(
   });
 }
 
+const DISMISSED_SUGGESTIONS = "ukoly-dismissed-suggestions";
+
+function dismissedSuggestions() {
+  try {
+    const raw = localStorage.getItem(DISMISSED_SUGGESTIONS);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set(parsed.filter((entry) => typeof entry === "string"));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function rememberDismissal(itemId: string, folderId: string) {
+  const next = dismissedSuggestions();
+  next.add(`${itemId}:${folderId}`);
+  try {
+    localStorage.setItem(
+      DISMISSED_SUGGESTIONS,
+      JSON.stringify([...next].slice(-400))
+    );
+  } catch {
+    // Soukromý režim návrh jen schová do dalšího načtení.
+  }
+}
+
+function FolderHint({ item }: { item: Item }) {
+  const { db } = useSnap();
+  const ui = useUi();
+  const [skipped, setSkipped] = useState(dismissedSuggestions);
+  const folder = suggestFolders(db, item.title).find(
+    (entry) => !skipped.has(`${item.id}:${entry.id}`)
+  );
+  if (!folder) return null;
+  const file = () => {
+    const mapped = mapStatus(db, item.statusId, folder.id);
+    const go = (statusId: string) => {
+      dispatch(placeOp(db, item.id, folder.id, statusId));
+      ui.pushToast(`Zařazeno do ${folder.name}`, true);
+    };
+    if (mapped.choices.length > 1) {
+      ui.askChoice({
+        title: "Který stav?",
+        options: mapped.choices.map((status) => ({
+          id: status.id,
+          label: status.name,
+        })),
+        onPick: go,
+      });
+      return;
+    }
+    if (mapped.statusId) go(mapped.statusId);
+  };
+  const reject = () => {
+    rememberDismissal(item.id, folder.id);
+    setSkipped(dismissedSuggestions());
+  };
+  return (
+    <span className="flex shrink-0 items-center rounded-md bg-accent-soft text-xs text-accent">
+      <button
+        type="button"
+        className="px-2 py-1"
+        title={`Zařadit do ${folder.name}`}
+        onPointerDown={keepControl}
+        onMouseDown={keepControl}
+        onClick={(event) => {
+          keepControl(event);
+          file();
+        }}
+      >
+        {folder.name}
+      </button>
+      <button
+        type="button"
+        className="px-1.5 py-1 text-muted hover:text-ink"
+        aria-label={`Odmítnout návrh ${folder.name}`}
+        title="Odmítnout"
+        onPointerDown={keepControl}
+        onMouseDown={keepControl}
+        onClick={(event) => {
+          keepControl(event);
+          reject();
+        }}
+      >
+        ×
+      </button>
+    </span>
+  );
+}
+
 export function TaskRow({
   item,
   showFolder = false,
@@ -566,63 +787,6 @@ export function TaskRow({
   const preview = bodyPreview(item.body);
 
   const toggle = () => toggleComplete(db, item, ui.askConfirm);
-  const [swipe, setSwipe] = useState(0);
-  const swipeRef = useRef(0);
-  const gesture = useRef<{
-    id: number;
-    x: number;
-    y: number;
-    axis: "x" | "y" | null;
-  } | null>(null);
-  const swiped = useRef(false);
-
-  const trackSwipe = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "touch") return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest("input, button, a, textarea")) return;
-    gesture.current = {
-      id: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      axis: null,
-    };
-  };
-
-  const moveSwipe = (event: PointerEvent<HTMLDivElement>) => {
-    const current = gesture.current;
-    if (!current || event.pointerId !== current.id) return;
-    const dx = event.clientX - current.x;
-    const dy = event.clientY - current.y;
-    if (!current.axis) {
-      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
-      current.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
-      if (current.axis === "y") {
-        gesture.current = null;
-        return;
-      }
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Prohlížeč pointer nepustí, gesto stejně doběhne.
-      }
-    }
-    const next = Math.max(-180, Math.min(180, dx));
-    swipeRef.current = next;
-    setSwipe(next);
-  };
-
-  const endSwipe = (event: PointerEvent<HTMLDivElement>) => {
-    const current = gesture.current;
-    if (!current || event.pointerId !== current.id) return;
-    gesture.current = null;
-    const dx = swipeRef.current;
-    swipeRef.current = 0;
-    setSwipe(0);
-    if (Math.abs(dx) < 96) return;
-    swiped.current = true;
-    toggle();
-  };
 
   return (
     <div
@@ -631,10 +795,14 @@ export function TaskRow({
         transform: CSS.Transform.toString(transform),
         transition,
         paddingLeft: 12 + depth * 20,
-        touchAction: "pan-y",
       }}
       className={cx(
-        "group relative cursor-grab overflow-hidden rounded-md touch-pan-y active:cursor-grabbing",
+        "group flex cursor-grab items-center gap-3 rounded-md px-3 py-2 active:cursor-grabbing",
+        itemMarked(ui.picked, ui.selectedId, item.id)
+          ? "bg-accent/25"
+          : striped
+          ? "bg-black/[0.03] hover:bg-black/5 dark:bg-white/[0.04] dark:hover:bg-white/10"
+          : "hover:bg-black/5 dark:hover:bg-white/10",
         isDragging && "opacity-0"
       )}
       {...attributes}
@@ -647,148 +815,120 @@ export function TaskRow({
         if (event.shiftKey || event.metaKey || event.ctrlKey)
           event.preventDefault();
       }}
-      onPointerDown={trackSwipe}
-      onPointerMove={moveSwipe}
-      onPointerUp={endSwipe}
-      onPointerCancel={endSwipe}
       onClick={(event) => {
-        if (swiped.current) {
-          swiped.current = false;
-          return;
-        }
         if (dragClick()) return;
         clickItem(ui, item.id, event);
       }}
     >
-      <div
-        aria-hidden
-        className="absolute inset-y-0 flex items-center overflow-hidden bg-accent px-3 text-sm whitespace-nowrap text-accent-ink"
-        style={{
-          width: Math.abs(swipe),
-          ...(swipe < 0
-            ? { right: 0, justifyContent: "flex-end" }
-            : { left: 0 }),
-        }}
-      >
-        {Math.abs(swipe) > 28 ? (checked ? "Otevřít" : "Hotovo") : ""}
-      </div>
-      <div
-        className={cx(
-          "flex items-center gap-3 px-3 py-2",
-          itemMarked(ui.picked, ui.selectedId, item.id)
-            ? "bg-[color-mix(in_srgb,var(--accent)_25%,var(--bg))] shadow-[inset_3px_0_0_var(--accent)]"
-            : striped
-            ? "bg-[color-mix(in_srgb,black_3%,var(--bg))] hover:bg-black/5 dark:bg-[color-mix(in_srgb,white_4%,var(--bg))] dark:hover:bg-white/10"
-            : "bg-bg hover:bg-black/5 dark:hover:bg-white/10"
-        )}
-        style={{
-          transform: `translateX(${swipe}px)`,
-          transition: swipe === 0 ? "transform 160ms ease" : "none",
-        }}
+      <label
+        className="grid size-11 shrink-0 -my-2 place-items-center"
+        onPointerDown={keepControl}
+        onMouseDown={keepControl}
+        onTouchStart={keepControl}
+        onClick={keepControl}
       >
         <input
-          className="size-6 shrink-0 accent-[var(--accent)]"
+          className="size-6 accent-[var(--accent)]"
           type="checkbox"
           checked={checked}
-          onPointerDown={keepControl}
-          onMouseDown={keepControl}
-          onTouchStart={keepControl}
-          onClick={keepControl}
           onChange={toggle}
           aria-label={checked ? "Označit jako otevřené" : "Označit jako hotové"}
         />
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <div className="w-full min-w-0 py-0.5 text-left">
-            <div className="flex w-full min-w-0 items-center gap-1.5">
-              <PriorityMark priority={item.priority} />
-              <ItemTitle
-                item={item}
-                struck={checked}
-                dragClick={dragClick}
-                className="h-6 min-w-0 flex-1 leading-6"
-              />
-            </div>
-            {ui.editingBodyId === item.id ? (
-              <TaskBodyEditor item={item} struck={checked} />
-            ) : (
-              preview && (
-                <p
-                  className={cx(
-                    "mt-0.5 line-clamp-2 cursor-text text-sm leading-5 text-muted",
-                    checked && "line-through"
-                  )}
-                  onPointerDown={keepControl}
-                  onMouseDown={keepControl}
-                  onClick={(event) => {
-                    keepControl(event);
-                    ui.editBody(item.id);
-                  }}
-                >
-                  {preview}
-                </p>
-              )
-            )}
-            <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-              {showFolder && folder && (
-                <span>
-                  {folderTrail(db, folder.id).map((entry, index) => (
-                    <span key={entry.id}>
-                      {index > 0 && " / "}
-                      <Link
-                        href={
-                          entry.system === "inbox"
-                            ? "/inbox"
-                            : `/folder/${entry.id}`
-                        }
-                        className="hover:text-ink"
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {entry.name}
-                      </Link>
-                    </span>
-                  ))}
-                </span>
-              )}
-              {middle && status && (
-                <span className="rounded-sm bg-accent-soft px-1.5 text-accent">
-                  {status.name}
-                </span>
-              )}
-              {due && (
-                <span className={overdue ? "text-danger" : ""}>
-                  {formatDay(due, today)}
-                </span>
-              )}
-              {item.plannedFor &&
-                (item.plannedFor !== due ||
-                  (item.planUntil != null &&
-                    item.planUntil > item.plannedFor)) && (
-                  <span>
-                    plán {planLabel(item.plannedFor, item.planUntil, today)}
-                  </span>
-                )}
-              {item.store && <span>{item.store}</span>}
-              {item.quantity && (
-                <span>
-                  {item.quantity}
-                  {item.unit ? ` ${item.unit}` : ""}
-                </span>
-              )}
-              {repeat && <span>{repeat}</span>}
-              {blocked && <span>čeká</span>}
-              {children.length > 0 && (
-                <span>
-                  {children.filter((child) => !isOpenItem(db, child)).length}/
-                  {children.length}
-                </span>
-              )}
-              {tags.map((tag) => (
-                <span key={tag.id}>#{tag.name}</span>
-              ))}
-            </span>
+      </label>
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="w-full min-w-0 py-0.5 text-left">
+          <div className="flex w-full min-w-0 items-center gap-1.5">
+            <ItemTitle
+              item={item}
+              struck={checked}
+              dragClick={dragClick}
+              className="h-6 min-w-0 flex-1 leading-6"
+            />
           </div>
+          {ui.editingBodyId === item.id ? (
+            <TaskBodyEditor item={item} struck={checked} />
+          ) : (
+            preview && (
+              <p
+                className={cx(
+                  "mt-0.5 line-clamp-2 cursor-text text-sm leading-5 text-muted",
+                  checked && "line-through"
+                )}
+                onPointerDown={keepControl}
+                onMouseDown={keepControl}
+                onClick={(event) => {
+                  keepControl(event);
+                  ui.editBody(item.id);
+                }}
+              >
+                {preview}
+              </p>
+            )
+          )}
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+            {folder?.system === "inbox" && isOpenItem(db, item) && (
+              <FolderHint item={item} />
+            )}
+            {showFolder && folder && (
+              <span>
+                {folderTrail(db, folder.id).map((entry, index) => (
+                  <span key={entry.id}>
+                    {index > 0 && " / "}
+                    <Link
+                      href={
+                        entry.system === "inbox"
+                          ? "/inbox"
+                          : `/folder/${entry.id}`
+                      }
+                      className="hover:text-ink"
+                      onClick={(event) => event.stopPropagation()}
+                    >
+                      {entry.name}
+                    </Link>
+                  </span>
+                ))}
+              </span>
+            )}
+            {middle && status && (
+              <span className="rounded-sm bg-accent-soft px-1.5 text-accent">
+                {status.name}
+              </span>
+            )}
+            {due && (
+              <span className={overdue ? "text-danger" : ""}>
+                {formatDay(due, today)}
+              </span>
+            )}
+            {item.plannedFor &&
+              (item.plannedFor !== due ||
+                (item.planUntil != null &&
+                  item.planUntil > item.plannedFor)) && (
+                <span>
+                  plán {planLabel(item.plannedFor, item.planUntil, today)}
+                </span>
+              )}
+            {repeat && <span>{repeat}</span>}
+            {blocked && <span>čeká</span>}
+            {children.length > 0 && (
+              <span>
+                {children.filter((child) => !isOpenItem(db, child)).length}/
+                {children.length}
+              </span>
+            )}
+            {tags.map((tag) => (
+              <Link
+                key={tag.id}
+                href={`/tag/${tag.id}`}
+                className="hover:text-ink"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <TagMark name={tag.name} color={tag.color} />
+              </Link>
+            ))}
+          </span>
         </div>
       </div>
+      {item.type === "task" && <PriorityNudge item={item} />}
     </div>
   );
 }
@@ -906,7 +1046,7 @@ function TaskComposer({ folder }: { folder: Folder }) {
               onMouseEnter={() => setHighlight(index)}
               onClick={() => acceptTag(tag.name)}
             >
-              <span className="min-w-0 truncate text-accent">#{tag.name}</span>
+              <TagMark name={tag.name} color={tag.color} />
             </button>
           ))}
         </div>
@@ -1246,9 +1386,9 @@ function BoardCard({ item }: { item: Item }) {
           : null),
       }}
       className={cx(
-        "mb-2 flex h-10 cursor-grab items-center gap-2 overflow-hidden rounded-md border px-3 active:cursor-grabbing",
+        "group mb-2 flex cursor-grab flex-col rounded-md border px-3 active:cursor-grabbing",
         itemMarked(ui.picked, ui.selectedId, item.id)
-          ? "border-accent bg-accent/25 shadow-[inset_3px_0_0_var(--accent)]"
+          ? "border-accent bg-accent/25"
           : "border-line bg-black/[0.04] hover:border-muted/40 dark:bg-white/[0.06] dark:hover:border-white/20",
         isDragging && "pointer-events-none opacity-0"
       )}
@@ -1267,21 +1407,36 @@ function BoardCard({ item }: { item: Item }) {
         clickItem(ui, item.id, event);
       }}
     >
-      <ItemTitle
-        item={item}
-        dragClick={dragClick}
-        className="h-5 min-w-0 flex-1 text-sm font-medium leading-5"
-      />
-      <PriorityMark priority={item.priority} />
-      {hasMeta && (
-        <span className="flex min-w-0 shrink items-center gap-2 text-xs leading-4 text-muted">
-          {due && <span>{due}</span>}
-          {repeat && <span>{repeat}</span>}
-          {tags.map((tag) => (
-            <span key={tag.id}>#{tag.name}</span>
-          ))}
-        </span>
-      )}
+      <div className="flex h-10 items-center gap-2">
+        <ItemTitle
+          item={item}
+          dragClick={dragClick}
+          className="h-5 min-w-0 flex-1 text-sm font-medium leading-5"
+        />
+        {hasMeta && (
+          <span className="flex min-w-0 shrink items-center gap-2 text-xs leading-4 text-muted">
+            {due && <span>{due}</span>}
+            {repeat && <span>{repeat}</span>}
+            {tags.map((tag) => (
+              <Link
+                key={tag.id}
+                href={`/tag/${tag.id}`}
+                className="hover:text-ink"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <TagMark name={tag.name} color={tag.color} />
+              </Link>
+            ))}
+          </span>
+        )}
+        <PriorityNudge item={item} />
+      </div>
+      {byId(db.folders, item.folderId)?.system === "inbox" &&
+        isOpenItem(db, item) && (
+          <div className="w-fit pb-2 empty:hidden">
+            <FolderHint item={item} />
+          </div>
+        )}
     </article>
   );
 }

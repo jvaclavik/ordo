@@ -19,6 +19,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
+import { isPaletteColor } from "../domain/color.ts";
 import { addDays, todayKey } from "../domain/dates.ts";
 import {
   byId,
@@ -30,6 +31,7 @@ import { newItem } from "../domain/factory.ts";
 import { viewLabel } from "../domain/labels.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import { keyAtStart } from "../domain/ordering.ts";
+import { splitNoteDraft, takeNoteIntent } from "../domain/noteIntent.ts";
 import { opsFromTaskLines, parseQuickAdd } from "../domain/quickAdd.ts";
 import {
   applyQuery,
@@ -37,11 +39,10 @@ import {
   folderItems,
   folderTrail,
   isOpenItem,
-  mapStatus,
-  readyItems,
+  focusSections,
   searchItems,
-  suggestFolders,
-  todaySections,
+  searchTags,
+  tagItems,
   visibleItems,
 } from "../domain/select.ts";
 import {
@@ -53,11 +54,17 @@ import {
   stickySlot,
   stickyTilt,
 } from "../domain/stickies.ts";
-import type { Folder, Item } from "../domain/types.ts";
+import {
+  FOLDER_COLOR_LABELS,
+  FOLDER_COLOR_ORDER,
+  type Folder,
+  type FolderPaint,
+  type Item,
+  type Tag,
+} from "../domain/types.ts";
 import { CalendarBoard, PlanTargets } from "./calendar.tsx";
 import { Dot, FolderChildren, FolderCrumbs, FolderGlyph } from "./folders.tsx";
 import { MarkdownLink } from "./links.tsx";
-import { placeOp } from "./move.ts";
 import { useUi } from "./state.tsx";
 import { BoardView, ItemList, ListView } from "./tasks.tsx";
 import {
@@ -66,6 +73,7 @@ import {
   hoverRow,
   OpenMark,
   PriorityMark,
+  TagMark,
   trapTab,
   useLayer,
 } from "./ui.tsx";
@@ -91,11 +99,6 @@ export function Capture() {
     const folderParam = params.get("folder");
     const due = params.get("due");
     const inbox = inboxFolder(db);
-    if (!text.trim() || !inbox) {
-      ui.openQuick({ text });
-      setLocation("/inbox", { replace: true });
-      return;
-    }
     const named = folderParam
       ? db.folders.find(
           (folder) =>
@@ -105,6 +108,45 @@ export function Capture() {
                 folderParam.toLocaleLowerCase("cs"))
         )
       : null;
+    const intent = takeNoteIntent(text);
+    if (intent.note && inbox) {
+      const folder = named ?? inbox;
+      const draft = splitNoteDraft(intent.text);
+      const home = folder.system === "inbox" ? "/inbox" : `/folder/${folder.id}`;
+      if (!draft) {
+        ui.openQuick({
+          text: intent.text,
+          kind: "note",
+          folderId: folder.id,
+        });
+        setLocation(home, { replace: true });
+        return;
+      }
+      const id = nanoid(10);
+      const next = dispatch({
+        type: "createItem",
+        item: newItem({
+          id,
+          folderId: folder.id,
+          title: draft.title,
+          body: draft.body,
+          type: "note",
+          statusId: resolvedOpen(db, folder)?.id ?? null,
+          applyRules: false,
+        }),
+      });
+      if (byId(next.items, id)) {
+        ui.pushToast("Poznámka uložena", true);
+        ui.select(id);
+      }
+      setLocation(home, { replace: true });
+      return;
+    }
+    if (!text.trim() || !inbox) {
+      ui.openQuick({ text });
+      setLocation("/inbox", { replace: true });
+      return;
+    }
     const first = parseQuickAdd(text, db, todayKey());
     const folder =
       byId(db.folders, first.folderId ?? named?.id ?? inbox.id) ?? inbox;
@@ -298,54 +340,35 @@ function countLabel(count: number, one: string, few: string, many: string) {
   return `${count} ${count < 5 ? few : many}`;
 }
 
+const FOCUS_TITLE = {
+  overdue: "Po termínu",
+  today: "Dnes",
+  soon: "Do týdne",
+  priority: "Vysoká priorita",
+  ready: "Můžu začít",
+} as const;
+
 export function TodayPage() {
   const { db } = useSnap();
   const today = todayKey();
-  const sections = todaySections(db, today);
+  const sections = focusSections(db, today);
   return (
     <div>
       <h1 className="mb-4 font-display text-3xl">Dnes</h1>
       <PlanTargets />
-      <Section
-        title="Naplánováno"
-        items={sections.planned}
-        empty="Na dnešek nic neplánuješ."
-      />
-      <Section
-        title="Termín dnes"
-        items={sections.due}
-        empty="Dnes nic nekončí."
-      />
-      <Section
-        title="Po termínu"
-        items={sections.overdue}
-        empty="Nic není po termínu."
-      />
+      {sections.length === 0 && (
+        <p className="px-2 text-sm text-muted">Teď tu nic není.</p>
+      )}
+      {sections.map((section) => (
+        <section key={section.id} className="mb-5">
+          <h2 className="mb-2 font-display text-2xl">{FOCUS_TITLE[section.id]}</h2>
+          <ItemList items={section.items} showFolder />
+        </section>
+      ))}
       <p className="mt-4 text-xs text-muted">
         Zítřek je {addDays(today, 1)}. Přetažení na plán nemění termín.
       </p>
     </div>
-  );
-}
-
-function Section({
-  title,
-  items,
-  empty,
-}: {
-  title: string;
-  items: ReturnType<typeof todaySections>["planned"];
-  empty: string;
-}) {
-  return (
-    <section className="mb-5">
-      <h2 className="mb-2 font-display text-2xl">{title}</h2>
-      {items.length === 0 ? (
-        <p className="px-2 text-sm text-muted">{empty}</p>
-      ) : (
-        <ItemList items={items} showFolder />
-      )}
-    </section>
   );
 }
 
@@ -395,79 +418,16 @@ export function InboxPage() {
           </Link>
         </p>
       }
-      listExtra={<InboxSuggestions folderId={inbox.id} />}
     />
-  );
-}
-
-function fileTo(
-  db: Parameters<typeof mapStatus>[0],
-  itemId: string,
-  folderId: string,
-  ui: ReturnType<typeof useUi>
-) {
-  const item = byId(db.items, itemId);
-  if (!item) return;
-  const mapped = mapStatus(db, item.statusId, folderId);
-  const go = (statusId: string) => {
-    dispatch(placeOp(db, item.id, folderId, statusId));
-    const folder = byId(db.folders, folderId);
-    ui.pushToast(folder ? `Zařazeno do ${folder.name}` : "Zařazeno", true);
-  };
-  if (mapped.choices.length > 1) {
-    ui.askChoice({
-      title: "Který stav?",
-      options: mapped.choices.map((status) => ({
-        id: status.id,
-        label: status.name,
-      })),
-      onPick: go,
-    });
-    return;
-  }
-  if (mapped.statusId) go(mapped.statusId);
-}
-
-function InboxSuggestions({ folderId }: { folderId: string }) {
-  const { db } = useSnap();
-  const ui = useUi();
-  const rows = folderItems(db, folderId, false).flatMap((item) => {
-    if (item.type !== "task" || !isOpenItem(db, item)) return [];
-    const ideas = suggestFolders(db, item.title);
-    if (ideas.length === 0) return [];
-    return [{ item, ideas }];
-  });
-  if (rows.length === 0) return null;
-  return (
-    <div className="mt-3 grid gap-2">
-      {rows.map(({ item, ideas }) => (
-        <div
-          key={item.id}
-          className="flex flex-wrap items-center gap-1 px-2 text-sm"
-        >
-          <span className="text-muted">{item.title}</span>
-          {ideas.map((folder) => (
-            <Button
-              key={folder.id}
-              onClick={() => fileTo(db, item.id, folder.id, ui)}
-            >
-              {folder.name}
-            </Button>
-          ))}
-        </div>
-      ))}
-    </div>
   );
 }
 
 function FolderScreen({
   folder,
   intro,
-  listExtra,
 }: {
   folder: Folder;
   intro?: ReactNode;
-  listExtra?: ReactNode;
 }) {
   const { db } = useSnap();
   const ui = useUi();
@@ -546,7 +506,6 @@ function FolderScreen({
         <>
           <FolderChildren parentId={folder.id} />
           <ListView folder={folder} items={tasks} />
-          {listExtra}
         </>
       )}
       {view === "board" && <BoardView folder={folder} />}
@@ -579,23 +538,6 @@ function noteSource(note: { title: string; body: string | null }) {
   const plain = first.replace(/^#{1,6}\s+/, "").trim();
   if (plain === note.title) return body;
   return `${note.title}\n${body}`;
-}
-
-function splitDraft(text: string) {
-  const source = text
-    .replace(/\r\n/g, "\n")
-    .replace(/\u00a0/g, " ")
-    .trim();
-  if (!source) return null;
-  const first = source.split("\n", 1)[0] ?? source;
-  const title = first
-    .replace(/^#{1,6}\s+/, "")
-    .replace(/^[-*]\s+/, "")
-    .replace(/^\d+\.\s+/, "")
-    .trim()
-    .slice(0, 500);
-  if (!title) return null;
-  return { title, body: source };
 }
 
 function splitTasks(body: string) {
@@ -818,7 +760,7 @@ function Notes({
     node.style.height = `${bottom}px`;
   });
   const create = (text: string) => {
-    const parsed = splitDraft(text);
+    const parsed = splitNoteDraft(text);
     if (!parsed) return;
     dispatch({
       type: "createItem",
@@ -862,7 +804,7 @@ function Notes({
             z={(note.pinZ ?? index) + 2}
             onDrop={drop}
             onCommit={(text) => {
-              const parsed = splitDraft(text);
+              const parsed = splitNoteDraft(text);
               if (!parsed) return;
               if (parsed.title === note.title && parsed.body === note.body)
                 return;
@@ -914,7 +856,7 @@ function NoteComposer({
   const commit = () => {
     if (sent.current || skip.current) return;
     const text = noteText(title, body);
-    if (!splitDraft(text)) return;
+    if (!splitNoteDraft(text)) return;
     sent.current = true;
     setTitle("");
     setBody("");
@@ -1254,22 +1196,6 @@ function StickyCard({
   );
 }
 
-export function ReadyPage() {
-  const { db } = useSnap();
-  const items = readyItems(db);
-  return (
-    <div>
-      <h1 className="mb-2 font-display text-3xl">Můžu začít</h1>
-      <p className="mb-4 text-muted">Otevřené úkoly, které na nic nečekají.</p>
-      {items.length === 0 ? (
-        <p className="text-sm text-muted">Teď tu nic není.</p>
-      ) : (
-        <ItemList items={items} showFolder />
-      )}
-    </div>
-  );
-}
-
 export function TrashPage() {
   const { db } = useSnap();
   const ui = useUi();
@@ -1320,6 +1246,73 @@ export function TrashPage() {
   );
 }
 
+function tagSwatch(color: string | null) {
+  return color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : "#767676";
+}
+
+function TagColor({ tag }: { tag: Tag }) {
+  const paint = (color: FolderPaint | null) =>
+    dispatch({ type: "updateTag", id: tag.id, color });
+  const custom = Boolean(tag.color && !isPaletteColor(tag.color));
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      {FOLDER_COLOR_ORDER.map((value) => (
+        <button
+          key={value}
+          type="button"
+          aria-label={FOLDER_COLOR_LABELS[value]}
+          aria-pressed={tag.color === value}
+          title={FOLDER_COLOR_LABELS[value]}
+          className={cx(
+            "size-6 rounded-full",
+            tag.color === value &&
+              "outline outline-2 outline-offset-2 outline-ink"
+          )}
+          style={{ background: `var(--${value})` }}
+          onClick={() => paint(tag.color === value ? null : value)}
+        />
+      ))}
+      <input
+        type="color"
+        aria-label="Vlastní barva"
+        title="Vlastní barva"
+        className={cx(
+          "h-7 w-10 cursor-pointer rounded-md border border-line bg-transparent p-0.5",
+          "[&::-webkit-color-swatch]:rounded-sm [&::-webkit-color-swatch]:border-none [&::-webkit-color-swatch-wrapper]:p-0",
+          custom && "outline outline-2 outline-offset-2 outline-ink"
+        )}
+        value={tagSwatch(tag.color)}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (/^#[0-9a-fA-F]{6}$/.test(next))
+            paint(next.toLowerCase() as FolderPaint);
+        }}
+      />
+    </div>
+  );
+}
+
+export function TagPage() {
+  const params = useParams<{ id: string }>();
+  const { db } = useSnap();
+  const tag = byId(db.tags, params.id ?? null);
+  if (!tag || tag.isDeleted) return <p>Štítek tu není.</p>;
+  const items = tagItems(db, tag.id);
+  return (
+    <div>
+      <h1 className="mb-3 font-display text-3xl">
+        <TagMark name={tag.name} color={tag.color} dotClassName="size-4" />
+      </h1>
+      <TagColor tag={tag} />
+      {items.length === 0 ? (
+        <p className="text-sm text-muted">Pod tímhle štítkem nic není.</p>
+      ) : (
+        <ItemList items={items} showFolder />
+      )}
+    </div>
+  );
+}
+
 export function ViewPage() {
   const params = useParams<{ id: string }>();
   const { db } = useSnap();
@@ -1359,6 +1352,7 @@ function SearchPanel() {
         )
         .slice(0, 6)
     : [];
+  const tags = searchTags(db, text);
   const items = searchItems(db, text);
   const hits = [
     ...folders.map((folder) => ({
@@ -1368,6 +1362,14 @@ function SearchPanel() {
         .map((part) => part.name)
         .join(" / "),
       href: folder.system === "inbox" ? "/inbox" : `/folder/${folder.id}`,
+    })),
+    ...tags.map((tag) => ({
+      kind: "tag" as const,
+      id: tag.id,
+      name: tag.name,
+      color: tag.color,
+      label: `#${tag.name}`,
+      href: `/tag/${tag.id}`,
     })),
     ...items.map((item) => ({
       kind: "item" as const,
@@ -1379,10 +1381,11 @@ function SearchPanel() {
   ];
   const active = hits.length === 0 ? 0 : Math.min(index, hits.length - 1);
   const openHit = (hit: (typeof hits)[number]) => {
-    if (hit.kind === "folder") {
+    if (hit.kind === "item") ui.setSelected(hit.id);
+    else {
       setLocation(hit.href);
       ui.select(null);
-    } else ui.setSelected(hit.id);
+    }
     ui.setMenuOpen(false);
     ui.setSearchOpen(false);
   };
@@ -1454,9 +1457,9 @@ function SearchPanel() {
             <p className="px-2 py-3 text-sm text-muted">Nic nenalezeno.</p>
           )}
           {hits.map((hit, hitIndex) =>
-            hit.kind === "folder" ? (
+            hit.kind === "folder" || hit.kind === "tag" ? (
               <Link
-                key={`folder-${hit.id}`}
+                key={`${hit.kind}-${hit.id}`}
                 id={`search-hit-${hitIndex}`}
                 href={hit.href}
                 role="option"
@@ -1473,7 +1476,13 @@ function SearchPanel() {
                   ui.setSearchOpen(false);
                 }}
               >
-                <span className="min-w-0 flex-1 truncate">{hit.label}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {hit.kind === "tag" ? (
+                    <TagMark name={hit.name} color={hit.color} />
+                  ) : (
+                    hit.label
+                  )}
+                </span>
                 <OpenMark />
               </Link>
             ) : (

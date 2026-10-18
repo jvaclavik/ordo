@@ -1,8 +1,8 @@
 import {
   AppName,
+  String as EvoluString,
   Mnemonic,
   NonEmptyTrimmedString100,
-  String as EvoluString,
   createAppOwner,
   createEvolu,
   createIdFromString,
@@ -14,12 +14,20 @@ import {
   maxLength,
   maxMutationSize,
   mnemonicToOwnerSecret,
-    sqliteTrue,
+  sqliteTrue,
   type Evolu,
 } from "@evolu/common";
 import { createEvoluDeps } from "@evolu/react-web";
-import { dbFromRows, isUntouched, mergeMissing, rowsFromDb, type SyncRow } from "./syncMap.ts";
 import type { Db } from "../domain/types.ts";
+import {
+  collapseInboxes,
+  dbFromRows,
+  fingerprint,
+  isUntouched,
+  mergeLatest,
+  rowsFromDb,
+  type SyncRow,
+} from "./syncMap.ts";
 
 const SyncSchema = {
   doc: {
@@ -37,7 +45,6 @@ const docsQuery = createQuery((db) =>
 );
 
 const mnemonicKey = "ordo-sync-mnemonic";
-const mergedKey = "ordo-sync-merged";
 
 export type SyncView = {
   mnemonic: string;
@@ -95,7 +102,9 @@ function loadOwner() {
     const owner = ownerFromMnemonic(existing);
     if (owner) return owner;
   }
-  const created = createAppOwner(createOwnerSecret({ randomBytes: createRandomBytes() }));
+  const created = createAppOwner(
+    createOwnerSecret({ randomBytes: createRandomBytes() })
+  );
   saveMnemonic(created.mnemonic);
   return created;
 }
@@ -116,10 +125,20 @@ function asRows(
   for (const row of raw) {
     if (!row.kind || !row.appId || row.payload == null) continue;
     if (row.isDeleted === 1) {
-      rows.push({ kind: row.kind as SyncRow["kind"], appId: row.appId, payload: row.payload, deleted: true });
+      rows.push({
+        kind: row.kind as SyncRow["kind"],
+        appId: row.appId,
+        payload: row.payload,
+        deleted: true,
+      });
       continue;
     }
-    rows.push({ kind: row.kind as SyncRow["kind"], appId: row.appId, payload: row.payload, deleted: false });
+    rows.push({
+      kind: row.kind as SyncRow["kind"],
+      appId: row.appId,
+      payload: row.payload,
+      deleted: false,
+    });
   }
   return rows;
 }
@@ -152,7 +171,10 @@ function writeDiff(db: Db) {
     next.set(key, row.payload);
     if (written.get(key) === row.payload) continue;
     if (row.payload.length > 100_000) {
-      setView({ phase: "error", detail: "Jedna položka je moc velká a nesynchronizovala se." });
+      setView({
+        phase: "error",
+        detail: "Jedna položka je moc velká a nesynchronizovala se.",
+      });
       continue;
     }
     const values = {
@@ -162,7 +184,10 @@ function writeDiff(db: Db) {
       payload: SyncSchema.doc.payload.orThrow(row.payload),
     };
     if (evolu.getMutationSize("doc", values) > maxMutationSize) {
-      setView({ phase: "error", detail: "Jedna položka je moc velká a nesynchronizovala se." });
+      setView({
+        phase: "error",
+        detail: "Jedna položka je moc velká a nesynchronizovala se.",
+      });
       continue;
     }
     evolu.upsert("doc", values);
@@ -185,7 +210,8 @@ export function noteLocal(db: Db) {
   } catch (error) {
     setView({
       phase: "error",
-      detail: error instanceof Error ? error.message : "Synchronizace se nepovedla.",
+      detail:
+        error instanceof Error ? error.message : "Synchronizace se nepovedla.",
     });
   }
 }
@@ -193,7 +219,9 @@ export function noteLocal(db: Db) {
 function refreshStatus() {
   if (!deps) return;
   const state = deps.syncState.get();
-  const transports = (state?.transports ?? []) as Array<{ connection: { type: string } }>;
+  const transports = (state?.transports ?? []) as Array<{
+    connection: { type: string };
+  }>;
   const connections = transports.map((transport) => transport.connection.type);
   if (connections.length === 0) {
     setView({ phase: "syncing", detail: null });
@@ -202,7 +230,8 @@ function refreshStatus() {
   if (connections.every((type) => type === "Disconnected")) {
     setView({
       phase: "offline",
-      detail: "Bez spojení. Data jsou na tomto zařízení a odešlou se, až se spojení vrátí.",
+      detail:
+        "Bez spojení. Data jsou na tomto zařízení a odešlou se, až se spojení vrátí.",
     });
     return;
   }
@@ -218,58 +247,87 @@ function request() {
   evolu.requestSync(evolu.appOwner.id);
 }
 
-function mergeLocal(local: Db | null) {
-  if (!local || isUntouched(local) || !evolu) return;
-  const ownerId = evolu.appOwner.id;
-  const mark = `${mergedKey}:${ownerId}`;
-  if (localStorage.getItem(mark) === "1") return;
+function mergeLocal(local: Db) {
+  if (!evolu || isUntouched(local)) return;
   const base = dbFromRows(readRows());
-  const merged = mergeMissing(base ?? local, local);
-  if (base && rowsFromDb(merged).length === rowsFromDb(base).length) {
-    localStorage.setItem(mark, "1");
-    return;
-  }
+  const merged = base ? collapseInboxes(mergeLatest(base, local)) : local;
+  if (base && fingerprint(merged) === fingerprint(base)) return;
   writeDiff(merged);
-  localStorage.setItem(mark, "1");
   publish(readRows());
 }
 
-export async function startSync(local: Db | null, apply: (db: Db) => void) {
-  onRemote = apply;
-  deps = createEvoluDeps();
-  const owner = loadOwner();
-  const run = createRun(deps);
-  evolu = await run.ok(
-    createEvolu(SyncSchema, {
-      appName,
-      appOwner: owner,
-    })
-  );
-  saveMnemonic(evolu.appOwner.mnemonic);
-  setView({ mnemonic: evolu.appOwner.mnemonic, phase: "syncing", detail: null });
-  deps.syncState.subscribe(refreshStatus);
-  await evolu.loadQuery(docsQuery);
-  remember(readRows());
-  evolu.subscribeQuery(docsQuery)(() => {
-    publish(readRows());
-  });
-  const initial = dbFromRows(readRows());
-  if (initial) apply(initial);
-  pushEnabled = true;
-  mergeLocal(local);
-  request();
-  window.addEventListener("online", request);
+let opening = false;
+let watching = false;
+
+function watchNetwork(readLocal: () => Db, apply: (db: Db) => void) {
+  if (watching) return;
+  watching = true;
+  const again = () => {
+    if (evolu) request();
+    else void startSync(readLocal, apply);
+  };
+  window.addEventListener("online", again);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") request();
+    if (document.visibilityState === "visible") again();
   });
-  window.setInterval(request, 60_000);
-  refreshStatus();
+  window.setInterval(again, 60_000);
+}
+
+export async function startSync(readLocal: () => Db, apply: (db: Db) => void) {
+  onRemote = apply;
+  watchNetwork(readLocal, apply);
+  if (evolu || opening) {
+    request();
+    return;
+  }
+  opening = true;
+  try {
+    deps = createEvoluDeps();
+    const owner = loadOwner();
+    const run = createRun(deps);
+    evolu = await run.ok(
+      createEvolu(SyncSchema, {
+        appName,
+        appOwner: owner,
+      })
+    );
+    saveMnemonic(evolu.appOwner.mnemonic);
+    setView({
+      mnemonic: evolu.appOwner.mnemonic,
+      phase: "syncing",
+      detail: null,
+    });
+    deps.syncState.subscribe(refreshStatus);
+    await evolu.loadQuery(docsQuery);
+    remember(readRows());
+    evolu.subscribeQuery(docsQuery)(() => {
+      publish(readRows());
+    });
+    pushEnabled = true;
+    const initial = dbFromRows(readRows());
+    if (initial) apply(initial);
+    else mergeLocal(readLocal());
+    request();
+    refreshStatus();
+  } catch (error) {
+    setView({
+      phase: navigator.onLine ? "error" : "offline",
+      detail: navigator.onLine
+        ? error instanceof Error
+          ? error.message
+          : "Synchronizace se nepovedla."
+        : "Bez spojení. Data jsou na tomto zařízení a odešlou se, až se spojení vrátí.",
+    });
+  } finally {
+    opening = false;
+  }
 }
 
 export function joinSync(mnemonic: string): string | null {
   const owner = ownerFromMnemonic(mnemonic.trim());
   if (!owner) return "Kód není platný.";
-  if (owner.mnemonic === view.mnemonic) return "Tohle zařízení už tenhle kód používá.";
+  if (owner.mnemonic === view.mnemonic)
+    return "Tohle zařízení už tenhle kód používá.";
   saveMnemonic(owner.mnemonic);
   window.location.reload();
   return null;

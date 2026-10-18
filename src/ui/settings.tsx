@@ -206,7 +206,6 @@ function Rules() {
   const [text, setText] = useState("");
   const [tagId, setTagId] = useState("");
   const [folderId, setFolderId] = useState(folders[0]?.id ?? "");
-  const [store, setStore] = useState("");
   const rules = orderedRules(db);
   return (
     <section id="pravidla" className="grid scroll-mt-6 gap-3">
@@ -229,11 +228,9 @@ function Rules() {
             actionFolderId: folderId,
             actionStatusId: null,
             actionTagId: null,
-            actionStore: store.trim() || null,
           });
           setText("");
           setTagId("");
-          setStore("");
         }}
       >
         <Field label="Když text obsahuje">
@@ -267,13 +264,6 @@ function Rules() {
             }}
           />
         </Field>
-        <Field label="Obchod, volitelně">
-          <input
-            className={control}
-            value={store}
-            onChange={(event) => setStore(event.target.value)}
-          />
-        </Field>
         <Button tone="solid" type="submit" className="mt-1 w-fit">
           Přidat pravidlo
         </Button>
@@ -294,7 +284,6 @@ function Rules() {
                 .filter(Boolean)
                 .join(" + ") || "Pravidlo"}{" "}
               → {folder?.name ?? "smazaná složka"}
-              {rule.actionStore ? `, ${rule.actionStore}` : ""}
             </span>
             <span className="flex gap-1">
               <Button

@@ -9,11 +9,16 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      includeAssets: ["favicon.svg", "icon-192.png", "icon-512.png"],
+      includeAssets: [
+        "favicon.svg",
+        "icon-192.png",
+        "icon-512.png",
+        "icon-maskable-512.png",
+      ],
       manifest: {
         name: "Ordo",
         short_name: "Ordo",
-        description: "Seznamy, nástěnky, poznámky a nákupy na jednom místě.",
+        description: "Seznamy, nástěnky a poznámky na jednom místě.",
         lang: "cs",
         start_url: "/",
         scope: "/",
@@ -21,10 +26,20 @@ export default defineConfig({
         background_color: "#f4f3f0",
         theme_color: "#f4f3f0",
         icons: [
-          { src: "icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "icon-512.png", sizes: "512x512", type: "image/png" },
+          {
+            src: "icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any",
+          },
           {
             src: "icon-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "any",
+          },
+          {
+            src: "icon-maskable-512.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
@@ -42,6 +57,7 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2,wasm}"],
         navigateFallback: "index.html",
+        navigateFallbackDenylist: [/^\/sw\.js$/, /^\/workbox-.*\.js$/],
       },
       devOptions: { enabled: false },
     }),

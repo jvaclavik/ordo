@@ -134,11 +134,6 @@ export type Item = {
   dueHasTime: boolean;
   plannedFor: string | null;
   planUntil: string | null;
-  store: string | null;
-  quantity: string | null;
-  unit: string | null;
-  spec: string | null;
-  templateId: string | null;
   parentItemId: string | null;
   seriesId: string | null;
   recurrenceFreq: RecurrenceFreq | null;
@@ -163,7 +158,7 @@ export type Tag = {
   id: string;
   workspaceId: string;
   name: string;
-  color: FolderColor | null;
+  color: FolderPaint | null;
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
@@ -211,20 +206,6 @@ export type ItemLink = {
   updatedAt: string;
 };
 
-export type ShoppingTemplate = {
-  id: string;
-  workspaceId: string;
-  name: string;
-  store: string | null;
-  unit: string | null;
-  spec: string | null;
-  defaultQuantity: string | null;
-  folderId: string | null;
-  isDeleted: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
 export type ViewGroup = "status" | "priority" | "assignee" | "folder" | "none";
 
 export type ViewQuery = {
@@ -234,7 +215,6 @@ export type ViewQuery = {
   openOnly: boolean;
   tagId: string | null;
   assigneeId: string | null;
-  store: string | null;
   groupBy: ViewGroup;
   text: string | null;
 };
@@ -261,7 +241,6 @@ export type Rule = {
   actionFolderId: string;
   actionStatusId: string | null;
   actionTagId: string | null;
-  actionStore: string | null;
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
@@ -278,7 +257,6 @@ export type Db = {
   people: Person[];
   dependencies: Dependency[];
   itemLinks: ItemLink[];
-  shoppingTemplates: ShoppingTemplate[];
   savedViews: SavedView[];
   rules: Rule[];
 };
@@ -304,11 +282,6 @@ export type ItemPatch = {
   dueHasTime?: boolean;
   plannedFor?: string | null;
   planUntil?: string | null;
-  store?: string | null;
-  quantity?: string | null;
-  unit?: string | null;
-  spec?: string | null;
-  templateId?: string | null;
   parentItemId?: string | null;
   sortOrder?: string;
   pinX?: number | null;
@@ -333,11 +306,6 @@ export type NewItem = {
   dueHasTime: boolean;
   plannedFor: string | null;
   planUntil: string | null;
-  store: string | null;
-  quantity: string | null;
-  unit: string | null;
-  spec: string | null;
-  templateId: string | null;
   parentItemId: string | null;
   sortOrder: string;
   applyRules: boolean;

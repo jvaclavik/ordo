@@ -15,7 +15,7 @@ import {
   type TagHint,
 } from "../domain/quickAdd.ts";
 import type { Db, Item } from "../domain/types.ts";
-import { cx } from "./ui.tsx";
+import { cx, TagMark } from "./ui.tsx";
 
 export type TagKeyResult = { handled: false } | { handled: true; name?: string };
 
@@ -132,7 +132,7 @@ export function TagMenu({
           onMouseEnter={() => onHover(index)}
           onClick={() => onPick(tag.name)}
         >
-          <span className="min-w-0 truncate text-accent">#{tag.name}</span>
+          <TagMark name={tag.name} color={tag.color} />
         </button>
       ))}
     </div>,

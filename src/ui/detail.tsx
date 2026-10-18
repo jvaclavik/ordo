@@ -1,4 +1,17 @@
-import { Plus, X } from "lucide-react";
+import {
+  Calendar,
+  Clock,
+  Flag,
+  FolderInput,
+  Link2,
+  ListChecks,
+  Plus,
+  Repeat,
+  Tag,
+  Trash2,
+  UserRound,
+  X,
+} from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
@@ -32,7 +45,19 @@ import { useUi } from "./state.tsx";
 import { askDeleteItems } from "./tasks.tsx";
 import { dispatchTaskText, TagMenu, useTagHint } from "./tagHint.tsx";
 import { MarkdownLink } from "./links.tsx";
-import { Button, control, cx, hoverRow, IconButton, OpenMark, priorityChip, PriorityMark } from "./ui.tsx";
+import {
+  Button,
+  control,
+  cx,
+  hoverRow,
+  IconButton,
+  OpenMark,
+  priorityChip,
+  PriorityMark,
+  TagMark,
+  trapTab,
+  useLayer,
+} from "./ui.tsx";
 
 const WEEK = [
   [1, "Po"],
@@ -56,7 +81,7 @@ function Fact({
   return (
     <button
       type="button"
-      className="rounded-sm px-1 py-0.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
+      className="rounded bg-ink/[0.06] px-2 py-0.5 text-left text-sm hover:bg-ink/10"
       onClick={onClick}
     >
       <span
@@ -245,65 +270,36 @@ function PriorityFields({ item }: { item: Item }) {
   );
 }
 
-function ShopFields({ item }: { item: Item }) {
-  const set = (patch: {
-    store?: string | null;
-    quantity?: string | null;
-    unit?: string | null;
-    spec?: string | null;
-  }) => dispatch({ type: "updateItem", id: item.id, patch });
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      <input
-        className={control}
-        aria-label="Obchod"
-        placeholder="Obchod"
-        value={item.store ?? ""}
-        onChange={(event) => set({ store: event.target.value || null })}
-      />
-      <input
-        className={control}
-        aria-label="Množství"
-        placeholder="Množství"
-        value={item.quantity ?? ""}
-        onChange={(event) => set({ quantity: event.target.value || null })}
-      />
-      <input
-        className={control}
-        aria-label="Jednotka"
-        placeholder="Jednotka"
-        value={item.unit ?? ""}
-        onChange={(event) => set({ unit: event.target.value || null })}
-      />
-      <input
-        className={control}
-        aria-label="Specifikace"
-        placeholder="Specifikace"
-        value={item.spec ?? ""}
-        onChange={(event) => set({ spec: event.target.value || null })}
-      />
-      <button
-        type="button"
-        className="col-span-2 w-fit text-xs text-muted hover:text-ink"
-        onClick={() =>
-          dispatch({ type: "makeTemplate", id: nanoid(10), itemId: item.id })
-        }
-      >
-        Kupovat opakovaně
-      </button>
-    </div>
-  );
-}
-
 export function Detail({ item }: { item: Item }) {
   const { db } = useSnap();
   const ui = useUi();
   const folder = byId(db.folders, item.folderId);
   const tags = tagsOf(db, item.id);
   const [extra, setExtra] = useState<string | null>(null);
+  const card = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setExtra(null);
   }, [item.id]);
+  useLayer((event) => {
+    if (event.key !== "Escape") {
+      trapTab(event, card.current);
+      return;
+    }
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const typing = Boolean(
+      target?.closest("input, textarea, select, [contenteditable='true']")
+    );
+    event.preventDefault();
+    if (typing) {
+      target?.blur();
+      return;
+    }
+    if (extra) {
+      setExtra(null);
+      return;
+    }
+    ui.setSelected(null);
+  });
   const people = alive(db.people);
   const allTags = alive(db.tags);
   const today = todayKey();
@@ -317,15 +313,6 @@ export function Detail({ item }: { item: Item }) {
     : null;
   const repeat = recurrenceLabel(item);
   const person = byId(db.people, item.assigneeId);
-  const shop = [
-    item.quantity
-      ? `${item.quantity}${item.unit ? ` ${item.unit}` : ""}`
-      : null,
-    item.store,
-    item.spec,
-  ]
-    .filter(Boolean)
-    .join(" · ");
   const toggle = (key: string) =>
     setExtra((current) => (current === key ? null : key));
 
@@ -347,194 +334,313 @@ export function Detail({ item }: { item: Item }) {
     if (mapped.statusId) go(mapped.statusId);
   };
 
+  const task = item.type === "task";
+
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-        <FolderCrumbs folderId={item.folderId} scope="detail" />
-        <IconButton label="Zavřít" onClick={() => ui.select(null)}>
-          <X size={18} />
-        </IconButton>
-      </div>
-      <div className="grid content-start gap-3 overflow-y-auto px-3 py-3">
-        <DetailTitle item={item} />
-        {(item.body || extra === "body") && (
-          <BodyEditor
-            item={item}
-            onCollapse={() => setExtra(null)}
-          />
-        )}
-        <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
-          {folder && item.type === "task" && (
-            <select
-              className="max-w-full bg-transparent py-0.5 text-sm outline-none"
-              aria-label="Stav"
-              value={item.statusId ?? ""}
-              onChange={(event) =>
-                dispatch(placeOp(db, item.id, folder.id, event.target.value))
-              }
-            >
-              {statusesOf(db, folder.id).map((status) => (
-                <option key={status.id} value={status.id}>
-                  {status.name}
-                </option>
-              ))}
-            </select>
-          )}
-          {dueLabel && <Fact onClick={() => toggle("due")}>{dueLabel}</Fact>}
-          {planText && (
-            <Fact onClick={() => toggle("plan")}>plán {planText}</Fact>
-          )}
-          {repeat && <Fact onClick={() => toggle("repeat")}>{repeat}</Fact>}
-          {item.priority && (
-            <button
-              type="button"
-              className="rounded-sm"
-              onClick={() => toggle("priority")}
-            >
-              <PriorityMark priority={item.priority} />
-            </button>
-          )}
-          {person && (
-            <Fact onClick={() => toggle("person")}>{person.name}</Fact>
-          )}
-          {shop && <Fact onClick={() => toggle("shop")}>{shop}</Fact>}
-          {tags.map((tag) => (
-            <button
-              key={tag.id}
-              type="button"
-              title="Odebrat štítek"
-              className="rounded-sm bg-accent-soft px-1.5 py-0.5 text-xs text-accent"
-              onClick={() =>
-                dispatch({
-                  type: "setItemTags",
-                  itemId: item.id,
-                  tagIds: tags
-                    .filter((entry) => entry.id !== tag.id)
-                    .map((entry) => entry.id),
-                })
-              }
-            >
-              #{tag.name} ×
-              <span className="sr-only"> odebrat</span>
-            </button>
-          ))}
-        </div>
-        <Relations item={item} />
-        <Subtasks item={item} />
-        {extra === "due" && <DueFields item={item} />}
-        {extra === "plan" && <PlanEditor item={item} />}
-        {extra === "repeat" && <RecurrenceEditor item={item} />}
-        {extra === "priority" && <PriorityFields item={item} />}
-        {extra === "person" && (
-          <select
-            className={control}
-            aria-label="Člověk"
-            value={item.assigneeId ?? ""}
-            onChange={(event) =>
-              dispatch({
-                type: "updateItem",
-                id: item.id,
-                patch: { assigneeId: event.target.value || null },
-              })
-            }
-          >
-            <option value="">Nikdo</option>
-            {people.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.name}
-              </option>
-            ))}
-          </select>
-        )}
-        {extra === "tag" && (
-          <TagAdder item={item} names={allTags.map((tag) => tag.name)} />
-        )}
-        {extra === "shop" && <ShopFields item={item} />}
-        {extra === "wait" && (
-          <RelationComposer item={item} mode="wait" onDone={() => setExtra(null)} />
-        )}
-        {extra === "link" && (
-          <RelationComposer item={item} mode="link" onDone={() => setExtra(null)} />
-        )}
-        {extra === "sub" && <SubtaskComposer item={item} onDone={() => setExtra(null)} />}
-        {extra === "move" && (
-          <FolderPicker
-            value={item.folderId}
-            onPick={(folderId) => {
-              if (folderId) setFolder(folderId);
-            }}
-          />
-        )}
-        {extra === "more" && (
-          <div className="flex flex-wrap gap-1 text-muted">
-            {(item.type === "task"
-              ? [
-                  ["due", "Termín"],
-                  ["plan", "Plán"],
-                  ["repeat", "Opakování"],
-                  ["priority", "Priorita"],
-                  ["person", "Člověk"],
-                  ["shop", "Nákup"],
-                  ["wait", "Čeká na"],
-                  ["sub", "Podúkol"],
-                ]
-              : []
-            ).concat([
-              ["tag", "Štítek"],
-              ["link", "Odkaz"],
-              ["body", "Popis"],
-              ["move", "Složka"],
-            ]).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className="rounded-sm px-2 py-1 text-xs hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
-                onClick={() => setExtra(key)}
-              >
-                {label}
-              </button>
-            ))}
-            {(item.dueAt || item.plannedFor) && (
-              <>
-                <button
-                  type="button"
-                  className="rounded-sm px-2 py-1 text-xs hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
-                  onClick={() => downloadIcs(item)}
-                >
-                  .ics
-                </button>
-                <button
-                  type="button"
-                  className="rounded-sm px-2 py-1 text-xs hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
-                  onClick={() => {
-                    const url = googleCalendarUrl(item);
-                    if (url) window.open(url, "_blank", "noopener");
-                  }}
-                >
-                  Google
-                </button>
-              </>
-            )}
-            <button
-              type="button"
-              className="rounded-sm px-2 py-1 text-xs hover:bg-danger/10"
-              onClick={() =>
-                askDeleteItems([item], ui.askConfirm, () => ui.setSelected(null))
-              }
-            >
-              <span className="text-danger">Smazat</span>
-            </button>
-          </div>
-        )}
-        <button
-          type="button"
-          className="w-fit text-xs"
-          onClick={() => toggle("more")}
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-ink/40">
+      <div
+        className="flex min-h-full items-start justify-center px-3 py-6 sm:px-8 sm:py-12"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) ui.setSelected(null);
+        }}
+      >
+        <div
+          ref={card}
+          data-detail
+          role="dialog"
+          aria-modal="true"
+          aria-label={item.title}
+          className="relative w-full max-w-3xl rounded-xl bg-raised p-4 shadow-[var(--shadow)] sm:p-6"
         >
-          <span className="text-muted">více</span>
-        </button>
+          <div className="mb-4 flex items-start gap-3">
+            <div className="grid min-w-0 flex-1 gap-1">
+              <DetailTitle item={item} />
+              <FolderCrumbs folderId={item.folderId} scope="detail" />
+            </div>
+            <IconButton label="Zavřít" onClick={() => ui.setSelected(null)}>
+              <X size={18} />
+            </IconButton>
+          </div>
+          <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_12.5rem]">
+            <div className="grid min-w-0 content-start gap-4">
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {tags.map((tag) => (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      title="Odebrat štítek"
+                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs hover:bg-ink/5"
+                      onClick={() =>
+                        dispatch({
+                          type: "setItemTags",
+                          itemId: item.id,
+                          tagIds: tags
+                            .filter((entry) => entry.id !== tag.id)
+                            .map((entry) => entry.id),
+                        })
+                      }
+                    >
+                      <TagMark name={tag.name} color={tag.color} />
+                      <span className="text-muted">×</span>
+                      <span className="sr-only"> odebrat</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {folder && task && (
+                  <select
+                    className="rounded bg-ink/[0.06] px-2 py-0.5 text-sm outline-none hover:bg-ink/10"
+                    aria-label="Stav"
+                    value={item.statusId ?? ""}
+                    onChange={(event) =>
+                      dispatch(placeOp(db, item.id, folder.id, event.target.value))
+                    }
+                  >
+                    {statusesOf(db, folder.id).map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {dueLabel && <Fact onClick={() => toggle("due")}>{dueLabel}</Fact>}
+                {planText && (
+                  <Fact onClick={() => toggle("plan")}>plán {planText}</Fact>
+                )}
+                {repeat && <Fact onClick={() => toggle("repeat")}>{repeat}</Fact>}
+                {item.priority && (
+                  <button
+                    type="button"
+                    className="rounded"
+                    onClick={() => toggle("priority")}
+                  >
+                    <PriorityMark priority={item.priority} />
+                  </button>
+                )}
+                {person && (
+                  <Fact onClick={() => toggle("person")}>{person.name}</Fact>
+                )}
+              </div>
+              {extra && (
+                <div className="grid gap-2">
+                  {extra === "due" && <DueFields item={item} />}
+                  {extra === "plan" && <PlanEditor item={item} />}
+                  {extra === "repeat" && <RecurrenceEditor item={item} />}
+                  {extra === "priority" && <PriorityFields item={item} />}
+                  {extra === "person" && (
+                    <select
+                      className={control}
+                      aria-label="Člověk"
+                      value={item.assigneeId ?? ""}
+                      onChange={(event) =>
+                        dispatch({
+                          type: "updateItem",
+                          id: item.id,
+                          patch: { assigneeId: event.target.value || null },
+                        })
+                      }
+                    >
+                      <option value="">Nikdo</option>
+                      {people.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {extra === "tag" && (
+                    <TagAdder item={item} names={allTags.map((tag) => tag.name)} />
+                  )}
+                  {extra === "wait" && (
+                    <RelationComposer
+                      item={item}
+                      mode="wait"
+                      onDone={() => setExtra(null)}
+                    />
+                  )}
+                  {extra === "link" && (
+                    <RelationComposer
+                      item={item}
+                      mode="link"
+                      onDone={() => setExtra(null)}
+                    />
+                  )}
+                  {extra === "sub" && (
+                    <SubtaskComposer item={item} onDone={() => setExtra(null)} />
+                  )}
+                  {extra === "move" && (
+                    <FolderPicker
+                      value={item.folderId}
+                      onPick={(folderId) => {
+                        if (folderId) setFolder(folderId);
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+              <section className="grid gap-2">
+                <h3 className="text-sm font-semibold">Popis</h3>
+                {item.body || extra === "body" ? (
+                  <div className="rounded-md bg-ink/[0.04] px-3 py-2">
+                    <BodyEditor item={item} onCollapse={() => setExtra(null)} />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="w-full rounded-md bg-ink/[0.04] px-3 py-2 text-left text-sm text-muted hover:bg-ink/[0.08]"
+                    onClick={() => setExtra("body")}
+                  >
+                    Přidat podrobnější popis…
+                  </button>
+                )}
+              </section>
+              <Relations item={item} />
+              <Subtasks item={item} />
+            </div>
+            <div className="grid content-start gap-4 lg:sticky lg:top-0">
+              <ActionGroup title="Přidat">
+                <ActionButton
+                  pressed={extra === "tag"}
+                  onClick={() => toggle("tag")}
+                >
+                  <Tag size={15} /> Štítek
+                </ActionButton>
+                {task && (
+                  <>
+                    <ActionButton
+                      pressed={extra === "due"}
+                      onClick={() => toggle("due")}
+                    >
+                      <Clock size={15} /> Termín
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "plan"}
+                      onClick={() => toggle("plan")}
+                    >
+                      <Calendar size={15} /> Plán
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "repeat"}
+                      onClick={() => toggle("repeat")}
+                    >
+                      <Repeat size={15} /> Opakování
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "priority"}
+                      onClick={() => toggle("priority")}
+                    >
+                      <Flag size={15} /> Priorita
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "person"}
+                      onClick={() => toggle("person")}
+                    >
+                      <UserRound size={15} /> Člověk
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "wait"}
+                      onClick={() => toggle("wait")}
+                    >
+                      <Clock size={15} /> Čeká na
+                    </ActionButton>
+                    <ActionButton
+                      pressed={extra === "sub"}
+                      onClick={() => toggle("sub")}
+                    >
+                      <ListChecks size={15} /> Podúkol
+                    </ActionButton>
+                  </>
+                )}
+                <ActionButton
+                  pressed={extra === "link"}
+                  onClick={() => toggle("link")}
+                >
+                  <Link2 size={15} /> Odkaz
+                </ActionButton>
+              </ActionGroup>
+              <ActionGroup title="Akce">
+                <ActionButton
+                  pressed={extra === "move"}
+                  onClick={() => toggle("move")}
+                >
+                  <FolderInput size={15} /> Složka
+                </ActionButton>
+                {(item.dueAt || item.plannedFor) && (
+                  <>
+                    <ActionButton onClick={() => downloadIcs(item)}>
+                      <Calendar size={15} /> .ics
+                    </ActionButton>
+                    <ActionButton
+                      onClick={() => {
+                        const url = googleCalendarUrl(item);
+                        if (url) window.open(url, "_blank", "noopener");
+                      }}
+                    >
+                      <Calendar size={15} /> Google
+                    </ActionButton>
+                  </>
+                )}
+                <ActionButton
+                  tone="danger"
+                  onClick={() =>
+                    askDeleteItems([item], ui.askConfirm, () => ui.setSelected(null))
+                  }
+                >
+                  <Trash2 size={15} /> Smazat
+                </ActionButton>
+              </ActionGroup>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+  );
+}
+
+function ActionGroup({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <p className="text-xs font-semibold text-muted">{title}</p>
+      {children}
+    </div>
+  );
+}
+
+function ActionButton({
+  pressed,
+  onClick,
+  tone,
+  children,
+}: {
+  pressed?: boolean;
+  onClick: () => void;
+  tone?: "danger";
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      className={cx(
+        "flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm",
+        pressed
+          ? "bg-accent-soft text-accent"
+          : tone === "danger"
+            ? "bg-ink/[0.06] text-danger hover:bg-danger/10"
+            : "bg-ink/[0.06] hover:bg-ink/10"
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -568,7 +674,7 @@ function DetailTitle({ item }: { item: Item }) {
     field.current?.focus();
   };
   return (
-    <div className="min-w-0 font-display text-2xl leading-tight">
+    <div className="min-w-0 text-xl font-semibold leading-snug">
       <input
         ref={field}
         data-detail-title
@@ -1010,7 +1116,8 @@ function Subtasks({ item }: { item: Item }) {
   const children = subtasksOf(db, item.id);
   if (children.length === 0) return null;
   return (
-    <div>
+    <section className="grid gap-1">
+      <h3 className="text-sm font-semibold">Podúkoly</h3>
       {children.map((child) => (
         <button
           key={child.id}
@@ -1025,7 +1132,7 @@ function Subtasks({ item }: { item: Item }) {
           <OpenMark />
         </button>
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -1081,7 +1188,8 @@ function Relations({ item }: { item: Item }) {
   const links = linksOf(db, item.id);
   if (waiting.length + blocking.length + links.length === 0) return null;
   return (
-    <div>
+    <section className="grid gap-1">
+      <h3 className="text-sm font-semibold">Vazby</h3>
       {waiting.map((entry) => (
         <button
           key={entry.id}
@@ -1128,7 +1236,7 @@ function Relations({ item }: { item: Item }) {
           </button>
         );
       })}
-    </div>
+    </section>
   );
 }
 

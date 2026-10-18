@@ -548,7 +548,7 @@ export function slashQueryExact(db: Db, query: string): boolean {
 
 const TAG_CHAR = /^[\p{L}\p{N}_-]$/u;
 
-export type TagHint = { id: string; name: string };
+export type TagHint = { id: string; name: string; color: string | null };
 
 export function hashAtCaret(
   text: string,
@@ -570,12 +570,13 @@ export function suggestTags(db: Db, query: string): TagHint[] {
     .map((tag) => ({
       id: tag.id,
       name: tag.name,
+      color: tag.color,
       score: tagScore(fold(tag.name), needle),
     }))
     .filter((tag) => tag.score > 0)
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, "cs"))
     .slice(0, 8)
-    .map(({ id, name }) => ({ id, name }));
+    .map(({ id, name, color }) => ({ id, name, color }));
 }
 
 export function tagQueryExact(db: Db, query: string): boolean {

@@ -14,7 +14,12 @@ import {
 } from "react";
 import { Link, useLocation } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
-import { isPaletteColor, paintCss, type FolderPaint } from "../domain/color.ts";
+import {
+  DEFAULT_FOLDER_COLOR,
+  isPaletteColor,
+  paintCss,
+  type FolderPaint,
+} from "../domain/color.ts";
 import { byId, descendantFolderIds, statusesOf } from "../domain/db.ts";
 import { viewLabel } from "../domain/labels.ts";
 import {
@@ -26,9 +31,7 @@ import {
 import {
   FOLDER_COLOR_LABELS,
   FOLDER_COLOR_ORDER,
-  FOLDER_COLORS,
   type Folder,
-  type FolderColor,
   type StatusMeaning,
   type ViewMode,
 } from "../domain/types.ts";
@@ -40,7 +43,15 @@ import {
 } from "./folderDrop.ts";
 import { FolderPicker } from "./folderPick.tsx";
 import { useUi } from "./state.tsx";
-import { Button, control, cx, Dialog, Field, useDragDisplaced } from "./ui.tsx";
+import {
+  Button,
+  control,
+  cx,
+  Dialog,
+  Disclosure,
+  Field,
+  useDragDisplaced,
+} from "./ui.tsx";
 
 const ICONS = ["🏠", "🛒", "🔨", "💡", "📐", "🌿", "💊", "📞", "📦", "✏️"];
 
@@ -375,7 +386,7 @@ function FolderNode({
         >
           <Dot color={folder.color} icon={folder.icon} />
           <span className="truncate">{folder.name}</span>
-          {(waiting || count > 0) && (
+          {(waiting || (children.length === 0 && count > 0)) && (
             <span
               title={waiting ? "Ještě čeká na zařazení" : undefined}
               className={cx(
@@ -715,32 +726,6 @@ function colorInputValue(color: FolderPaint): string {
   return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : "#12826c";
 }
 
-function freeFolderColor(folders: Folder[]): FolderColor {
-  const counts = new Map<FolderColor, number>(
-    FOLDER_COLORS.map((color) => [color, 0])
-  );
-  for (const folder of folders) {
-    if (folder.isDeleted || folder.isArchived) continue;
-    const color = folder.color;
-    if (!color) {
-      counts.set("c1", (counts.get("c1") ?? 0) + 1);
-      continue;
-    }
-    if (!isPaletteColor(color)) continue;
-    counts.set(color, (counts.get(color) ?? 0) + 1);
-  }
-  let pick: FolderColor = FOLDER_COLORS[0];
-  let least = Infinity;
-  for (const color of FOLDER_COLORS) {
-    const count = counts.get(color) ?? 0;
-    if (count < least) {
-      pick = color;
-      least = count;
-    }
-  }
-  return pick;
-}
-
 export function FolderDialog() {
   const { db } = useSnap();
   const ui = useUi();
@@ -750,10 +735,11 @@ export function FolderDialog() {
     : null;
   const [name, setName] = useState("");
   const [icon, setIcon] = useState<string | null>(null);
-  const [color, setColor] = useState<FolderPaint>("c1");
+  const [color, setColor] = useState<FolderPaint>(DEFAULT_FOLDER_COLOR);
   const [keywords, setKeywords] = useState("");
   const [view, setView] = useState<ViewMode>("list");
   const [parentId, setParentId] = useState<string | null>(null);
+  const [statusesOpen, setStatusesOpen] = useState(false);
 
   useEffect(() => {
     if (!edit) return;
@@ -762,10 +748,11 @@ export function FolderDialog() {
       : null;
     setName(current?.name ?? "");
     setIcon(current?.icon ?? null);
-    setColor(current?.color ?? (current ? "c1" : freeFolderColor(db.folders)));
+    setColor(current?.color ?? DEFAULT_FOLDER_COLOR);
     setKeywords(current?.keywords ?? "");
     setView(current?.defaultView ?? "list");
     setParentId(current?.parentId ?? edit.parentId);
+    setStatusesOpen(false);
   }, [edit]);
 
   if (!edit) return null;
@@ -950,48 +937,55 @@ export function FolderDialog() {
         </Field>
         {folder && (
           <div className="grid gap-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Otevřený stav">
-                <select
-                  className={control}
-                  value={folder.openStatusId ?? ""}
-                  onChange={(event) =>
-                    dispatch({
-                      type: "updateFolder",
-                      id: folder.id,
-                      patch: { openStatusId: event.target.value || null },
-                    })
-                  }
-                >
-                  <option value="">Podle významu</option>
-                  {statuses.map((status) => (
-                    <option key={status.id} value={status.id}>
-                      {status.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Hotový stav">
-                <select
-                  className={control}
-                  value={folder.closedStatusId ?? ""}
-                  onChange={(event) =>
-                    dispatch({
-                      type: "updateFolder",
-                      id: folder.id,
-                      patch: { closedStatusId: event.target.value || null },
-                    })
-                  }
-                >
-                  <option value="">Podle významu</option>
-                  {statuses.map((status) => (
-                    <option key={status.id} value={status.id}>
-                      {status.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
+            <Disclosure
+              open={statusesOpen}
+              label="Otevřený a hotový stav"
+              onClick={() => setStatusesOpen((open) => !open)}
+            />
+            {statusesOpen && (
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Otevřený stav">
+                  <select
+                    className={control}
+                    value={folder.openStatusId ?? ""}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "updateFolder",
+                        id: folder.id,
+                        patch: { openStatusId: event.target.value || null },
+                      })
+                    }
+                  >
+                    <option value="">Podle významu</option>
+                    {statuses.map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Hotový stav">
+                  <select
+                    className={control}
+                    value={folder.closedStatusId ?? ""}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "updateFolder",
+                        id: folder.id,
+                        patch: { closedStatusId: event.target.value || null },
+                      })
+                    }
+                  >
+                    <option value="">Podle významu</option>
+                    {statuses.map((status) => (
+                      <option key={status.id} value={status.id}>
+                        {status.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            )}
             {statuses.map((status, index) => (
               <div
                 key={status.id}

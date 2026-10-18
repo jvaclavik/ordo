@@ -11,7 +11,6 @@ const collections = [
   ["person", "people"],
   ["dependency", "dependencies"],
   ["itemLink", "itemLinks"],
-  ["shoppingTemplate", "shoppingTemplates"],
   ["savedView", "savedViews"],
   ["rule", "rules"],
 ] as const;
@@ -81,7 +80,7 @@ export function dbFromRows(rows: readonly SyncRow[]): Db | null {
     (db[key] as unknown[]).push(parsed);
   }
   if (db.folders.length === 0 || db.workspaces.length === 0) return null;
-  return withPlan(db);
+  return collapseInboxes(withPlan(db));
 }
 
 export function fingerprint(db: Db): string {
@@ -98,7 +97,6 @@ export function isUntouched(db: Db): boolean {
     db.tags.length === 0 &&
     db.people.length === 0 &&
     db.rules.length === 0 &&
-    db.shoppingTemplates.length === 0 &&
     db.savedViews.length === 0 &&
     db.itemLinks.length === 0 &&
     db.dependencies.length === 0 &&
@@ -108,14 +106,92 @@ export function isUntouched(db: Db): boolean {
   );
 }
 
-export function mergeMissing(base: Db, local: Db): Db {
-  const merged = structuredClone(base);
-  const present = new Set(rowsFromDb(base).map((row) => `${row.kind}:${row.appId}`));
-  for (const [kind, key] of collections) {
-    for (const entity of local[key]) {
-      if (present.has(`${kind}:${entity.id}`)) continue;
-      (merged[key] as unknown[]).push(structuredClone(entity));
+export function collapseInboxes(db: Db): Db {
+  const inboxes = db.folders.filter(
+    (folder) => !folder.isDeleted && folder.system === "inbox"
+  );
+  if (inboxes.length <= 1) return db;
+  const itemsIn = (id: string) =>
+    db.items.filter((item) => !item.isDeleted && item.folderId === id).length;
+  const [keep, ...rest] = [...inboxes].sort((a, b) => {
+    const byItems = itemsIn(b.id) - itemsIn(a.id);
+    if (byItems !== 0) return byItems;
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+    return a.id < b.id ? -1 : 1;
+  });
+  if (!keep) return db;
+  const drop = new Set(rest.map((folder) => folder.id));
+  const keepStatuses = db.statuses.filter(
+    (status) => status.folderId === keep.id && !status.isDeleted
+  );
+  const statusMap = new Map<string, string>();
+  const statuses = db.statuses.map((status) => {
+    if (status.isDeleted || !drop.has(status.folderId)) return status;
+    const clash = keepStatuses.find(
+      (candidate) => candidate.meaning === status.meaning
+    );
+    if (clash) {
+      statusMap.set(status.id, clash.id);
+      return { ...status, isDeleted: true };
     }
+    statusMap.set(status.id, status.id);
+    return { ...status, folderId: keep.id };
+  });
+  const mapStatus = (id: string | null) => (id ? statusMap.get(id) ?? id : id);
+  return {
+    ...db,
+    folders: db.folders.map((folder) => {
+      if (drop.has(folder.id)) return { ...folder, isDeleted: true };
+      if (folder.parentId && drop.has(folder.parentId))
+        return { ...folder, parentId: keep.id };
+      return folder;
+    }),
+    statuses,
+    items: db.items.map((item) => {
+      if (!drop.has(item.folderId)) return item;
+      return { ...item, folderId: keep.id, statusId: mapStatus(item.statusId) };
+    }),
+    rules: db.rules.map((rule) => {
+      const actionFolderId = drop.has(rule.actionFolderId)
+        ? keep.id
+        : rule.actionFolderId;
+      const actionStatusId = mapStatus(rule.actionStatusId);
+      if (
+        actionFolderId === rule.actionFolderId &&
+        actionStatusId === rule.actionStatusId
+      )
+        return rule;
+      return { ...rule, actionFolderId, actionStatusId };
+    }),
+    savedViews: db.savedViews.map((view) => {
+      const folderId =
+        view.folderId && drop.has(view.folderId) ? keep.id : view.folderId;
+      const queryFolder =
+        view.query.folderId && drop.has(view.query.folderId)
+          ? keep.id
+          : view.query.folderId;
+      if (folderId === view.folderId && queryFolder === view.query.folderId)
+        return view;
+      return {
+        ...view,
+        folderId,
+        query: { ...view.query, folderId: queryFolder },
+      };
+    }),
+  };
+}
+
+export function mergeLatest(remote: Db, local: Db): Db {
+  const merged = structuredClone(remote);
+  for (const [, key] of collections) {
+    const rows = merged[key] as Array<{ id: string; updatedAt: string }>;
+    const byId = new Map(rows.map((entity) => [entity.id, entity]));
+    for (const entity of local[key] as Array<{ id: string; updatedAt: string }>) {
+      const current = byId.get(entity.id);
+      if (!current || current.updatedAt < entity.updatedAt)
+        byId.set(entity.id, structuredClone(entity));
+    }
+    (merged[key] as unknown[]) = [...byId.values()];
   }
   return merged;
 }

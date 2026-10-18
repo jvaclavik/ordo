@@ -12,6 +12,7 @@ import {
   seriesIdOf,
   sortKeyForStatus,
   statusesOf,
+  withPlan,
   workspaceId,
   wouldDependencyCycle,
   wouldFolderCycle,
@@ -29,7 +30,7 @@ export function reduce(db: Db, op: Op, ctx: Ctx): Db {
     case "batch":
       return op.ops.reduce((next, child) => reduce(next, child, ctx), db);
     case "replaceDb":
-      return isValidDb(op.db) ? op.db : db;
+      return isValidDb(op.db) ? withPlan(op.db) : db;
     case "emptyTrash":
       return emptyTrash(db);
     case "createFolder":
@@ -66,7 +67,7 @@ export function reduce(db: Db, op: Op, ctx: Ctx): Db {
       return mapTag(db, op.id, (tag) => ({
         ...tag,
         name: op.name?.trim() || tag.name,
-        color: op.color !== undefined ? op.color : tag.color,
+        color: op.color !== undefined ? normalizeFolderColor(op.color) : tag.color,
         updatedAt: ctx.now,
       }));
     case "deleteTag":
@@ -96,21 +97,6 @@ export function reduce(db: Db, op: Op, ctx: Ctx): Db {
         ...db,
         itemLinks: db.itemLinks.map((link) => (link.id === op.id ? { ...link, isDeleted: true, updatedAt: ctx.now } : link)),
       };
-    case "makeTemplate":
-      return makeTemplate(db, op.id, op.itemId, ctx);
-    case "createTemplate":
-      return createTemplate(db, op, ctx);
-    case "updateTemplate":
-      return updateTemplate(db, op, ctx);
-    case "deleteTemplate":
-      return {
-        ...db,
-        shoppingTemplates: db.shoppingTemplates.map((template) =>
-          template.id === op.id ? { ...template, isDeleted: true, updatedAt: ctx.now } : template,
-        ),
-      };
-    case "buyTemplate":
-      return buyTemplate(db, op.templateId, op.itemId, ctx);
     case "createView":
       return createView(db, op, ctx);
     case "deleteView":
@@ -321,7 +307,6 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
   if (!requested || requested.isDeleted || !title || byId(db.items, input.id)) return db;
   let folder = requested;
   let statusId = input.statusId;
-  let store = input.store;
   let tagIds = [...input.tagIds];
   if (input.applyRules && folder.system === "inbox") {
     const rule = matchingRule(db, { title, body: input.body }, tagIds);
@@ -330,7 +315,6 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
       if (applied) {
         folder = applied.folder;
         statusId = applied.statusId;
-        if (rule.actionStore) store = rule.actionStore;
         if (rule.actionTagId && !tagIds.includes(rule.actionTagId)) tagIds.push(rule.actionTagId);
       }
     }
@@ -351,11 +335,6 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
     dueHasTime: input.dueHasTime,
     plannedFor: input.plannedFor,
     planUntil: input.planUntil,
-    store,
-    quantity: input.quantity,
-    unit: input.unit,
-    spec: input.spec,
-    templateId: input.templateId,
     parentItemId: input.parentItemId,
     seriesId: null,
     recurrenceFreq: null,
@@ -416,11 +395,6 @@ function updateItem(db: Db, id: string, patch: ItemPatch, ctx: Ctx, fileInbox = 
         dueHasTime: patch.dueHasTime !== undefined ? patch.dueHasTime : row.dueHasTime,
         plannedFor: patch.plannedFor !== undefined ? patch.plannedFor : row.plannedFor,
         planUntil: patch.planUntil !== undefined ? patch.planUntil : row.planUntil ?? null,
-        store: patch.store !== undefined ? patch.store : row.store,
-        quantity: patch.quantity !== undefined ? patch.quantity : row.quantity,
-        unit: patch.unit !== undefined ? patch.unit : row.unit,
-        spec: patch.spec !== undefined ? patch.spec : row.spec,
-        templateId: patch.templateId !== undefined ? patch.templateId : row.templateId,
         parentItemId: patch.parentItemId !== undefined ? patch.parentItemId : row.parentItemId,
         sortOrder: patch.sortOrder ? patch.sortOrder : row.sortOrder,
         pinX: patch.pinX !== undefined ? patch.pinX : (row.pinX ?? null),
@@ -616,7 +590,7 @@ function ensureTag(db: Db, op: Extract<Op, { type: "ensureTag" }>, ctx: Ctx): Db
     ...db,
     tags: [
       ...db.tags,
-      { id: op.id, workspaceId: workspaceId(db), name, color: op.color, isDeleted: false, createdAt: ctx.now, updatedAt: ctx.now },
+      { id: op.id, workspaceId: workspaceId(db), name, color: normalizeFolderColor(op.color), isDeleted: false, createdAt: ctx.now, updatedAt: ctx.now },
     ],
   };
 }
@@ -725,122 +699,6 @@ function addLink(db: Db, op: Extract<Op, { type: "addLink" }>, ctx: Ctx): Db {
   };
 }
 
-function createTemplate(db: Db, op: Extract<Op, { type: "createTemplate" }>, ctx: Ctx): Db {
-  const name = op.name.trim().slice(0, 200);
-  if (!name) return db;
-  const existing = alive(db.shoppingTemplates).find(
-    (template) => fold(template.name) === fold(name) && fold(template.store ?? "") === fold(op.store ?? ""),
-  );
-  if (existing) return db;
-  return {
-    ...db,
-    shoppingTemplates: [
-      ...db.shoppingTemplates,
-      {
-        id: op.id,
-        workspaceId: workspaceId(db),
-        name,
-        store: op.store,
-        unit: op.unit,
-        spec: op.spec,
-        defaultQuantity: op.defaultQuantity,
-        folderId: op.folderId,
-        isDeleted: false,
-        createdAt: ctx.now,
-        updatedAt: ctx.now,
-      },
-    ],
-  };
-}
-
-function makeTemplate(db: Db, id: string, itemId: string, ctx: Ctx): Db {
-  const item = byId(db.items, itemId);
-  if (!item || item.isDeleted) return db;
-  const existing = alive(db.shoppingTemplates).find(
-    (template) => fold(template.name) === fold(item.title) && fold(template.store ?? "") === fold(item.store ?? ""),
-  );
-  const templateId = existing?.id ?? id;
-  if (!existing) {
-    db = {
-      ...db,
-      shoppingTemplates: [
-        ...db.shoppingTemplates,
-        {
-          id,
-          workspaceId: workspaceId(db),
-          name: item.title,
-          store: item.store,
-          unit: item.unit,
-          spec: item.spec,
-          defaultQuantity: item.quantity,
-          folderId: item.folderId,
-          isDeleted: false,
-          createdAt: ctx.now,
-          updatedAt: ctx.now,
-        },
-      ],
-    };
-  }
-  return mapItem(db, item.id, (row) => ({ ...row, templateId, pristine: false, updatedAt: ctx.now }));
-}
-
-function updateTemplate(db: Db, op: Extract<Op, { type: "updateTemplate" }>, ctx: Ctx): Db {
-  return {
-    ...db,
-    shoppingTemplates: db.shoppingTemplates.map((template) => {
-      if (template.id !== op.id) return template;
-      const name = op.name !== undefined ? op.name.trim() : template.name;
-      if (!name) return template;
-      return {
-        ...template,
-        name,
-        store: op.store !== undefined ? op.store : template.store,
-        unit: op.unit !== undefined ? op.unit : template.unit,
-        spec: op.spec !== undefined ? op.spec : template.spec,
-        defaultQuantity: op.defaultQuantity !== undefined ? op.defaultQuantity : template.defaultQuantity,
-        folderId: op.folderId !== undefined ? op.folderId : template.folderId,
-        updatedAt: ctx.now,
-      };
-    }),
-  };
-}
-
-function buyTemplate(db: Db, templateId: string, itemId: string, ctx: Ctx): Db {
-  const template = byId(db.shoppingTemplates, templateId);
-  if (!template || template.isDeleted || byId(db.items, itemId)) return db;
-  const already = alive(db.items).find((item) => item.templateId === template.id && !isClosedOut(db, item.statusId));
-  if (already) return db;
-  const folder = (template.folderId ? byId(db.folders, template.folderId) : null) ?? inboxFolder(db);
-  if (!folder || folder.isDeleted) return db;
-  return createItem(
-    db,
-    {
-      id: itemId,
-      folderId: folder.id,
-      type: "task",
-      title: template.name,
-      body: template.spec,
-      statusId: resolvedOpen(db, folder)?.id ?? null,
-      priority: null,
-      assigneeId: null,
-      dueAt: null,
-      dueHasTime: false,
-      plannedFor: null,
-      planUntil: null,
-      store: template.store,
-      quantity: template.defaultQuantity,
-      unit: template.unit,
-      spec: template.spec,
-      templateId: template.id,
-      parentItemId: null,
-      sortOrder: "",
-      applyRules: folder.system === "inbox",
-      tagIds: [],
-    },
-    ctx,
-  );
-}
-
 function createView(db: Db, op: Extract<Op, { type: "createView" }>, ctx: Ctx): Db {
   const name = op.name.trim().slice(0, 80);
   if (!name) return db;
@@ -883,7 +741,6 @@ function createRule(db: Db, op: Extract<Op, { type: "createRule" }>, ctx: Ctx): 
           actionFolderId: op.actionFolderId,
           actionStatusId: op.actionStatusId,
           actionTagId: op.actionTagId,
-          actionStore: op.actionStore,
           isDeleted: false,
           createdAt: ctx.now,
           updatedAt: ctx.now,
@@ -907,7 +764,6 @@ function updateRule(db: Db, op: Extract<Op, { type: "updateRule" }>, ctx: Ctx): 
         actionFolderId: op.actionFolderId !== undefined ? op.actionFolderId : rule.actionFolderId,
         actionStatusId: op.actionStatusId !== undefined ? op.actionStatusId : rule.actionStatusId,
         actionTagId: op.actionTagId !== undefined ? op.actionTagId : rule.actionTagId,
-        actionStore: op.actionStore !== undefined ? op.actionStore : rule.actionStore,
         updatedAt: ctx.now,
       };
     }),
@@ -944,7 +800,6 @@ function fileInboxItem(db: Db, itemId: string, ctx: Ctx): Db {
     ...row,
     folderId: applied.folder.id,
     statusId: applied.statusId,
-    store: rule.actionStore ?? row.store,
     sortOrder,
     updatedAt: ctx.now,
   }));
@@ -997,7 +852,6 @@ function emptyTrash(db: Db): Db {
     itemTags: keep(db.itemTags).filter((link) => itemIds.has(link.itemId) && tagIds.has(link.tagId)),
     dependencies: keep(db.dependencies).filter((row) => itemIds.has(row.itemId) && itemIds.has(row.dependsOnId)),
     itemLinks: keep(db.itemLinks).filter((link) => itemIds.has(link.fromId) && itemIds.has(link.toId)),
-    shoppingTemplates: keep(db.shoppingTemplates),
     savedViews: keep(db.savedViews),
     rules: keep(db.rules).filter((rule) => folderIds.has(rule.actionFolderId)),
   };

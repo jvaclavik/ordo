@@ -7,8 +7,6 @@ import {
   Redo2,
   Search,
   Settings,
-  ShoppingBasket,
-  SquareCheck,
   Sun,
   Trash2,
   Undo2,
@@ -18,6 +16,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
@@ -25,6 +24,7 @@ import {
 } from "react";
 import { Link, Redirect, Route, Switch, useLocation, useParams } from "wouter";
 import { dispatch, redo, undo, useSnap } from "../data/store.tsx";
+import { getSyncView, subscribeSync } from "../data/sync.ts";
 import { alive, byId, resolvedClosed, resolvedOpen } from "../domain/db.ts";
 import { mapStatus } from "../domain/select.ts";
 import { CalendarBoard } from "./calendar.tsx";
@@ -38,8 +38,8 @@ import {
   FolderPage,
   HomePage,
   InboxPage,
-  ReadyPage,
   SearchDialog,
+  TagPage,
   TodayPage,
   TrashPage,
   ViewPage,
@@ -47,7 +47,6 @@ import {
 import { PeoplePage, PersonPage } from "./people.tsx";
 import { QuickAdd } from "./quick.tsx";
 import { SettingsPage } from "./settings.tsx";
-import { ShoppingPage } from "./shopping.tsx";
 import { useUi } from "./state.tsx";
 import {
   askDeleteItems,
@@ -56,7 +55,7 @@ import {
   visibleTaskIds,
 } from "./tasks.tsx";
 import { ThemeSync } from "./theme.tsx";
-import { Button, cx, Dialog, IconButton, layerOpen, modLabel } from "./ui.tsx";
+import { Button, cx, Dialog, IconButton, layerOpen, modLabel, TagMark } from "./ui.tsx";
 
 export function Shell() {
   return (
@@ -181,6 +180,36 @@ function SidebarEdge({
   );
 }
 
+function useOnline() {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("online", onChange);
+      window.addEventListener("offline", onChange);
+      return () => {
+        window.removeEventListener("online", onChange);
+        window.removeEventListener("offline", onChange);
+      };
+    },
+    () => navigator.onLine,
+    () => true
+  );
+}
+
+function SyncNote() {
+  const online = useOnline();
+  const sync = useSyncExternalStore(subscribeSync, getSyncView, getSyncView);
+  const offline = !online || sync.phase === "offline";
+  if (!offline && sync.phase !== "error") return null;
+  return (
+    <p className="mb-4 rounded-md bg-black/[0.04] px-3 py-2 text-sm text-muted dark:bg-white/[0.06]" role="status">
+      {offline
+        ? "Bez spojení. Úpravy zůstanou v tomhle zařízení a synchronizují se, až se spojení vrátí."
+        : (sync.detail ??
+          "Synchronizace se nepovedla. Úpravy jsou uložené v tomhle zařízení.")}
+    </p>
+  );
+}
+
 function Frame() {
   const snap = useSnap();
   const ui = useUi();
@@ -210,19 +239,14 @@ function Frame() {
           onMouseDown={() => ui.setMenuOpen(false)}
         >
           <div
-            className="h-full w-[min(20rem,88vw)] overflow-y-auto bg-panel p-3"
+            className="h-full w-[min(20rem,88vw)] bg-panel"
             onMouseDown={(event) => event.stopPropagation()}
           >
             <Sidebar />
           </div>
         </div>
       )}
-      <div
-        className={cx(
-          "min-w-0",
-          selected && "lg:grid lg:grid-cols-[minmax(0,1fr)_20rem]"
-        )}
-      >
+      <div className="min-w-0">
         <main className="min-w-0 px-4 pb-24 pt-5 lg:px-8 lg:pb-12 lg:pt-6">
           {(snap.memoryOnly || snap.persistError) && (
             <p className="mb-4 rounded-md bg-warn/15 px-3 py-2 text-sm">
@@ -231,6 +255,7 @@ function Frame() {
                 : `Uložení selhalo: ${snap.persistError}`}
             </p>
           )}
+          <SyncNote />
           <div className="mb-4 flex items-center gap-1 lg:hidden">
             <IconButton label="Menu" onClick={() => ui.setMenuOpen(true)}>
               <Menu size={20} />
@@ -276,13 +301,15 @@ function Frame() {
           <Switch>
             <Route path="/" component={HomePage} />
             <Route path="/today" component={TodayPage} />
+            <Route path="/ready">
+              <Redirect href="/today" />
+            </Route>
             <Route path="/inbox" component={InboxPage} />
             <Route path="/folder/:id" component={FolderPage} />
+            <Route path="/tag/:id" component={TagPage} />
             <Route path="/people" component={PeoplePage} />
             <Route path="/people/:id" component={PersonRoute} />
             <Route path="/calendar" component={CalendarRoute} />
-            <Route path="/shopping" component={ShoppingPage} />
-            <Route path="/ready" component={ReadyPage} />
             <Route path="/add" component={AddRoute} />
             <Route path="/settings" component={SettingsPage} />
             <Route path="/trash" component={TrashPage} />
@@ -292,14 +319,7 @@ function Frame() {
             </Route>
           </Switch>
         </main>
-        {selected && (
-          <aside
-            data-detail
-            className="fixed inset-0 z-30 bg-panel shadow-[var(--shadow)] lg:static lg:border-l lg:border-line lg:shadow-none"
-          >
-            <Detail item={selected} />
-          </aside>
-        )}
+        {selected && <Detail item={selected} />}
       </div>
       <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-raised pb-[env(safe-area-inset-bottom)] lg:hidden">
         <Tab href="/" label="Domů" icon={<House size={18} />} />
@@ -314,11 +334,6 @@ function Frame() {
           <Plus size={22} />
           <span className="text-xs">Přidat</span>
         </button>
-        <Tab
-          href="/shopping"
-          label="Nákupy"
-          icon={<ShoppingBasket size={18} />}
-        />
         <button
           type="button"
           className="grid flex-1 place-items-center py-2 text-xs text-muted"
@@ -826,25 +841,17 @@ function Sidebar() {
   const ui = useUi();
   const tags = alive(db.tags);
   return (
-    <div className="flex h-full flex-col gap-5 p-4">
-      <p className="px-3 font-display text-3xl leading-none text-ink">Ordo</p>
-      <nav className="grid gap-1">
-        <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
-        <Side
-          href="/shopping"
-          label="Nákupy"
-          icon={<ShoppingBasket size={18} />}
-        />
-        <Side href="/calendar" label="Kalendář" icon={<Calendar size={18} />} />
-        <Side
-          href="/ready"
-          label="Můžu začít"
-          icon={<SquareCheck size={18} />}
-        />
-        <Side href="/people" label="Lidé" icon={<Users size={18} />} />
-      </nav>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="-mx-2 grid min-w-0 gap-0.5 [&>*]:min-w-0">
+    <div className="flex h-full flex-col gap-5 py-4">
+      <div className="grid gap-5 px-4">
+        <p className="px-3 font-display text-3xl leading-none text-ink">Ordo</p>
+        <nav className="grid gap-1">
+          <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
+          <Side href="/calendar" label="Kalendář" icon={<Calendar size={18} />} />
+          <Side href="/people" label="Lidé" icon={<Users size={18} />} />
+        </nav>
+      </div>
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
+        <div className="grid min-w-full gap-0.5 [&>*]:min-w-0">
           <Side href="/" label="Domů" icon={<House size={18} />} tree />
           <FolderTree />
           <RootDrop />
@@ -861,15 +868,20 @@ function Sidebar() {
           </button>
         </div>
         {tags.length > 0 && (
-          <div className="mt-4 grid gap-1">
+          <div className="mt-4 grid gap-1 px-4">
             <p className="px-2 text-xs text-muted">Štítky</p>
             {tags.map((tag) => (
-              <TagChip key={tag.id} id={tag.id} name={tag.name} />
+              <TagChip
+                key={tag.id}
+                id={tag.id}
+                name={tag.name}
+                color={tag.color}
+              />
             ))}
           </div>
         )}
       </div>
-      <nav className="grid gap-1">
+      <nav className="grid gap-1 px-4">
         <Side
           href="/settings"
           label="Nastavení"
@@ -881,19 +893,39 @@ function Sidebar() {
   );
 }
 
-function TagChip({ id, name }: { id: string; name: string }) {
+function TagChip({
+  id,
+  name,
+  color,
+}: {
+  id: string;
+  name: string;
+  color: string | null;
+}) {
+  const ui = useUi();
+  const [location] = useLocation();
   const drop = useDroppable({ id: `tag:${id}` });
+  const href = `/tag/${id}`;
+  const active = location === href;
   return (
-    <div
+    <Link
+      href={href}
       ref={drop.setNodeRef}
       className={cx(
-        "cursor-default rounded-md px-3 py-1 text-sm",
-        drop.isOver && "bg-accent-soft text-accent"
+        "rounded-md px-3 py-1 text-sm",
+        drop.isOver && "bg-accent-soft text-accent",
+        active
+          ? "bg-accent-soft text-accent"
+          : "hover:bg-black/5 dark:hover:bg-white/10"
       )}
+      onClick={() => {
+        ui.setMenuOpen(false);
+        ui.select(null);
+      }}
     >
-      #{name}
-      <span className="sr-only">, přidá se přetažením úkolu</span>
-    </div>
+      <TagMark name={name} color={color} />
+      <span className="sr-only">, filtr položek. Přetažením úkolu se přidá.</span>
+    </Link>
   );
 }
 

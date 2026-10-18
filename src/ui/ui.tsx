@@ -6,6 +6,7 @@ import {
   type ButtonHTMLAttributes,
   type ReactNode,
 } from "react";
+import { paintCss } from "../domain/color.ts";
 import { priorityLabel } from "../domain/labels.ts";
 import type { Priority } from "../domain/types.ts";
 
@@ -17,6 +18,29 @@ export const modLabel =
 
 export function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+export function TagMark({
+  name,
+  color,
+  dotClassName = "size-2",
+}: {
+  name: string;
+  color: string | null;
+  dotClassName?: string;
+}) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {color && (
+        <span
+          aria-hidden
+          className={cx(dotClassName, "shrink-0 rounded-full")}
+          style={{ background: paintCss(color) }}
+        />
+      )}
+      <span className="min-w-0 truncate">#{name}</span>
+    </span>
+  );
 }
 
 export function priorityChip(priority: Priority | null, selected = false): { box: string; ink: string } {
