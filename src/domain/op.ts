@@ -31,7 +31,7 @@ export type Op =
   | { type: "deleteStatus"; id: string }
   | { type: "createItem"; item: NewItem }
   | { type: "updateItem"; id: string; patch: ItemPatch; fileInbox?: boolean }
-  | { type: "placeItem"; id: string; folderId: string; statusId: string; sortOrder: string }
+  | { type: "placeItem"; id: string; folderId: string; statusId: string; sortOrder: string; manual?: true }
   | { type: "deleteItem"; id: string }
   | { type: "restoreItem"; id: string }
   | { type: "ensureTag"; id: string; name: string; color: FolderPaint | null }

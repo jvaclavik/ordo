@@ -30,16 +30,16 @@ import {
 import { newItem } from "../domain/factory.ts";
 import { viewLabel } from "../domain/labels.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
-import { keyAtStart } from "../domain/ordering.ts";
 import { splitNoteDraft, takeNoteIntent } from "../domain/noteIntent.ts";
+import { keyAtStart } from "../domain/ordering.ts";
 import { opsFromTaskLines, parseQuickAdd } from "../domain/quickAdd.ts";
 import {
   applyQuery,
   childFolders,
+  focusSections,
   folderItems,
   folderTrail,
   isOpenItem,
-  focusSections,
   searchItems,
   searchTags,
   tagItems,
@@ -63,7 +63,13 @@ import {
   type Tag,
 } from "../domain/types.ts";
 import { CalendarBoard, PlanTargets } from "./calendar.tsx";
-import { Dot, FolderChildren, FolderCrumbs, FolderGlyph } from "./folders.tsx";
+import {
+  Dot,
+  FolderChildren,
+  FolderCrumbs,
+  FolderGlyph,
+  treePad,
+} from "./folders.tsx";
 import { MarkdownLink } from "./links.tsx";
 import { useUi } from "./state.tsx";
 import { BoardView, ItemList, ListView } from "./tasks.tsx";
@@ -112,7 +118,8 @@ export function Capture() {
     if (intent.note && inbox) {
       const folder = named ?? inbox;
       const draft = splitNoteDraft(intent.text);
-      const home = folder.system === "inbox" ? "/inbox" : `/folder/${folder.id}`;
+      const home =
+        folder.system === "inbox" ? "/inbox" : `/folder/${folder.id}`;
       if (!draft) {
         ui.openQuick({
           text: intent.text,
@@ -275,7 +282,7 @@ function HomeFolder({
           "flex items-center gap-2 rounded-md py-2 pr-3 hover:bg-black/5 dark:hover:bg-white/10",
           stripe && "bg-black/[0.03] dark:bg-white/[0.04]"
         )}
-        style={{ paddingLeft: 4 + depth * 16 }}
+        style={{ paddingLeft: treePad(depth) }}
       >
         {children.length > 0 ? (
           <button
@@ -307,7 +314,11 @@ function HomeFolder({
         >
           <Dot color={folder.color} icon={folder.icon} />
           <span className="min-w-0 flex-1">
-            <span className="block truncate font-medium">{folder.name}</span>
+            <span
+              className={cx("block truncate", depth === 0 && "font-medium")}
+            >
+              {folder.name}
+            </span>
             {parts.length > 0 && (
               <span className="block truncate text-xs text-muted">
                 {parts.join(" · ")}
@@ -361,12 +372,15 @@ export function TodayPage() {
       )}
       {sections.map((section) => (
         <section key={section.id} className="mb-5">
-          <h2 className="mb-2 font-display text-2xl">{FOCUS_TITLE[section.id]}</h2>
+          <h2 className="mb-2 font-display text-2xl">
+            {FOCUS_TITLE[section.id]}
+          </h2>
           <ItemList items={section.items} showFolder />
         </section>
       ))}
       <p className="mt-4 text-xs text-muted">
-        Zítřek je {addDays(today, 1)}. Přetažení na plán nemění termín.
+        Zítřek je {addDays(today, 1)}. Přetažení na den nastaví plán a zruší
+        přesný termín.
       </p>
     </div>
   );
@@ -512,6 +526,7 @@ function FolderScreen({
       {view === "notes" && <Notes folderId={folder.id} notes={notes} />}
       {view === "calendar" && (
         <CalendarBoard
+          folderId={folder.id}
           items={visibleItems(db).filter(
             (item) =>
               item.folderId === folder.id ||
@@ -1430,7 +1445,7 @@ function SearchPanel() {
   }, [active, text]);
   return (
     <div
-      className="fixed inset-0 z-50 bg-ink/30 p-4"
+      className="fixed inset-0 z-50 bg-ink/15 p-4"
       onMouseDown={() => ui.setSearchOpen(false)}
     >
       <div

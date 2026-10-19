@@ -6,6 +6,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  ArrowDownWideNarrow,
   ChevronDown,
   ChevronsUp,
   ChevronUp,
@@ -23,7 +24,7 @@ import {
 } from "react";
 import { Link } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
-import { formatDay, todayKey } from "../domain/dates.ts";
+import { todayKey } from "../domain/dates.ts";
 import {
   byId,
   inboxFolder,
@@ -33,7 +34,7 @@ import {
 } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
 import { pullHashtags, removeToken } from "../domain/hashtags.ts";
-import { planLabel } from "../domain/horizon.ts";
+import { whenLabel } from "../domain/horizon.ts";
 import { priorityLabel } from "../domain/labels.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
@@ -42,7 +43,7 @@ import {
   outdentOutline,
 } from "../domain/outline.ts";
 import {
-  opsFromTaskLines,
+  opsFromTaskDraft,
   suggestTags,
   tagQueryExact,
   tokenAtCaret,
@@ -58,8 +59,15 @@ import {
   suggestFolders,
   tagsOf,
 } from "../domain/select.ts";
-import type { Folder, Item, Priority, Status } from "../domain/types.ts";
+import type {
+  Folder,
+  Item,
+  ItemSort,
+  Priority,
+  Status,
+} from "../domain/types.ts";
 import { useBoardSlot } from "./boardDrop.ts";
+import { DictateButton } from "./dictate.tsx";
 import { LinkedText } from "./links.tsx";
 import { completionOps, placeOp } from "./move.ts";
 import { useUi, type ConfirmState } from "./state.tsx";
@@ -203,7 +211,7 @@ export function ItemTitle({
   };
   const frame = cx(
     "block min-w-0",
-    truncate && !editing && "truncate",
+    editing || truncate ? "truncate" : "break-words whitespace-normal",
     struck && "text-muted line-through",
     className
   );
@@ -219,7 +227,6 @@ export function ItemTitle({
           if (event.shiftKey || event.metaKey || event.ctrlKey) return;
           event.stopPropagation();
           ui.setSelected(item.id);
-          setDraft(item.title);
         }}
       >
         <LinkedText text={item.title} onActivate={keepControl} />
@@ -240,7 +247,7 @@ export function ItemTitle({
     <span className={frame}>
       <input
         ref={inputRef}
-        className="block h-full w-full min-w-0 max-w-full cursor-grab border-0 bg-transparent p-0 outline-none"
+        className="block w-full min-w-0 cursor-grab border-0 bg-transparent p-0 whitespace-nowrap outline-none"
         value={draft}
         aria-label="Název"
         onPointerDown={keepControl}
@@ -682,12 +689,13 @@ function rememberDismissal(itemId: string, folderId: string) {
   }
 }
 
-function FolderHint({ item }: { item: Item }) {
+export function FolderHint({ item }: { item: Item }) {
   const { db } = useSnap();
   const ui = useUi();
   const [skipped, setSkipped] = useState(dismissedSuggestions);
   const folder = suggestFolders(db, item.title).find(
-    (entry) => !skipped.has(`${item.id}:${entry.id}`)
+    (entry) =>
+      entry.id !== item.folderId && !skipped.has(`${item.id}:${entry.id}`)
   );
   if (!folder) return null;
   const file = () => {
@@ -714,7 +722,7 @@ function FolderHint({ item }: { item: Item }) {
     setSkipped(dismissedSuggestions());
   };
   return (
-    <span className="flex shrink-0 items-center rounded-md bg-accent-soft text-xs text-accent">
+    <span className="flex shrink-0 items-center rounded-md bg-raised text-xs text-accent ring-1 ring-inset ring-accent">
       <button
         type="button"
         className="px-2 py-1"
@@ -777,9 +785,11 @@ export function TaskRow({
   const closed = folder ? resolvedClosed(db, folder) : null;
   const middle =
     status && closed && status.id !== closed.id && status.meaning !== "todo";
-  const due = item.dueAt?.slice(0, 10) ?? null;
   const today = todayKey();
-  const overdue = Boolean(due && due < today && isOpenItem(db, item));
+  const when = whenLabel(item, today);
+  const overdue = Boolean(
+    item.dueAt && item.dueAt.slice(0, 10) < today && isOpenItem(db, item)
+  );
   const tags = tagsOf(db, item.id);
   const blocked = blockingItems(db, item.id).length > 0;
   const children = subtasksOf(db, item.id);
@@ -842,7 +852,8 @@ export function TaskRow({
               item={item}
               struck={checked}
               dragClick={dragClick}
-              className="h-6 min-w-0 flex-1 leading-6"
+              truncate={false}
+              className="min-w-0 flex-1 leading-6"
             />
           </div>
           {ui.editingBodyId === item.id ? (
@@ -866,9 +877,7 @@ export function TaskRow({
             )
           )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
-            {folder?.system === "inbox" && isOpenItem(db, item) && (
-              <FolderHint item={item} />
-            )}
+            {isOpenItem(db, item) && <FolderHint item={item} />}
             {showFolder && folder && (
               <span>
                 {folderTrail(db, folder.id).map((entry, index) => (
@@ -894,19 +903,9 @@ export function TaskRow({
                 {status.name}
               </span>
             )}
-            {due && (
-              <span className={overdue ? "text-danger" : ""}>
-                {formatDay(due, today)}
-              </span>
+            {when && (
+              <span className={overdue ? "text-danger" : ""}>{when}</span>
             )}
-            {item.plannedFor &&
-              (item.plannedFor !== due ||
-                (item.planUntil != null &&
-                  item.planUntil > item.plannedFor)) && (
-                <span>
-                  plán {planLabel(item.plannedFor, item.planUntil, today)}
-                </span>
-              )}
             {repeat && <span>{repeat}</span>}
             {blocked && <span>čeká</span>}
             {children.length > 0 && (
@@ -947,7 +946,10 @@ export function ListView({ folder, items }: { folder: Folder; items: Item[] }) {
     .sort((a, b) => rank(a) - rank(b) || (a.sortOrder < b.sortOrder ? -1 : 1));
   return (
     <div>
-      <DoneFilter showDone={showDone} onChange={ui.setShowDone} />
+      <div className="mb-1 flex items-center justify-end gap-1">
+        <SortMenu folder={folder} />
+        <DoneFilter showDone={showDone} onChange={ui.setShowDone} />
+      </div>
       <ItemList items={visible} />
       <TaskComposer folder={folder} />
     </div>
@@ -999,7 +1001,7 @@ function TaskComposer({ folder }: { folder: Folder }) {
   };
   const commit = () => {
     const inbox = inboxFolder(db);
-    const { ops, itemIds } = opsFromTaskLines(db, draft, {
+    const { ops, itemIds } = opsFromTaskDraft(db, draft, {
       folderId: folder.id,
       statusId: resolvedOpen(db, folder)?.id ?? null,
       dateRole: "due",
@@ -1051,62 +1053,85 @@ function TaskComposer({ folder }: { folder: Folder }) {
           ))}
         </div>
       )}
-      <textarea
-        ref={ref}
-        autoFocus
-        rows={1}
-        aria-label="Nový úkol"
-        placeholder="Nový úkol…"
-        data-task-composer=""
-        className="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 outline-none placeholder:text-muted"
-        value={draft}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          setCaret(event.target.selectionStart ?? 0);
-        }}
-        onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
-        onKeyDown={(event) => {
-          if (open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      <div className="flex items-start gap-1">
+        <textarea
+          ref={ref}
+          autoFocus
+          rows={1}
+          aria-label="Nový úkol"
+          placeholder="Nový úkol…"
+          data-task-composer=""
+          className="block min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent p-0 outline-none placeholder:text-muted"
+          value={draft}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setCaret(event.target.selectionStart ?? 0);
+          }}
+          onSelect={(event) =>
+            setCaret(event.currentTarget.selectionStart ?? 0)
+          }
+          onKeyDown={(event) => {
+            if (
+              open &&
+              (event.key === "ArrowDown" || event.key === "ArrowUp")
+            ) {
+              event.preventDefault();
+              const step = event.key === "ArrowDown" ? 1 : -1;
+              setHighlight((index) => {
+                const current = Math.min(index, tags.length - 1);
+                return (current + step + tags.length) % tags.length;
+              });
+              return;
+            }
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !event.metaKey &&
+              !event.ctrlKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              if (open) {
+                const tag = tags[picked];
+                if (tag) acceptTag(tag.name);
+                return;
+              }
+              commit();
+              return;
+            }
+            if (event.key !== "Escape") return;
             event.preventDefault();
-            const step = event.key === "ArrowDown" ? 1 : -1;
-            setHighlight((index) => {
-              const current = Math.min(index, tags.length - 1);
-              return (current + step + tags.length) % tags.length;
-            });
-            return;
-          }
-          if (
-            open &&
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.altKey &&
-            !event.metaKey &&
-            !event.ctrlKey
-          ) {
-            event.preventDefault();
-            const tag = tags[picked];
-            if (tag) acceptTag(tag.name);
-            return;
-          }
-          if (event.key !== "Escape") return;
-          event.preventDefault();
-          event.stopPropagation();
-          if (open) {
-            setDismissedKey(tokenKey);
-            return;
-          }
-          skip.current = true;
-          setDraft("");
-          event.currentTarget.blur();
-        }}
-        onBlur={() => {
-          if (skip.current) {
-            skip.current = false;
-            return;
-          }
-          commit();
-        }}
-      />
+            event.stopPropagation();
+            if (open) {
+              setDismissedKey(tokenKey);
+              return;
+            }
+            skip.current = true;
+            setDraft("");
+            event.currentTarget.blur();
+          }}
+          onBlur={(event) => {
+            if (
+              event.relatedTarget instanceof Element &&
+              event.relatedTarget.closest("[data-dictate]")
+            )
+              return;
+            if (skip.current) {
+              skip.current = false;
+              return;
+            }
+            commit();
+          }}
+        />
+        <DictateButton
+          value={draft}
+          onChange={(next) => {
+            setDraft(next);
+            setCaret(next.length);
+          }}
+        />
+      </div>
     </div>
   );
 }
@@ -1142,7 +1167,7 @@ export function DoneFilter({
     };
   }, [open]);
   return (
-    <div ref={ref} className="relative mb-1 flex justify-end">
+    <div ref={ref} className="relative">
       <button
         type="button"
         aria-label="Filtr"
@@ -1192,7 +1217,10 @@ export function BoardView({ folder }: { folder: Folder }) {
   );
   return (
     <div>
-      <DoneFilter showDone={ui.showDone} onChange={ui.setShowDone} />
+      <div className="mb-1 flex items-center justify-end gap-1">
+        <SortMenu folder={folder} />
+        <DoneFilter showDone={ui.showDone} onChange={ui.setShowDone} />
+      </div>
       <div className="board-row">
         {statuses.map((status) => {
           const column = items
@@ -1216,6 +1244,89 @@ function boardSort() {
   return null;
 }
 
+const SORT_MODES: { id: ItemSort | null; label: string }[] = [
+  { id: null, label: "Ručně" },
+  { id: "priority", label: "Priorita" },
+  { id: "created", label: "Datum přidání" },
+];
+
+function SortMenu({ folder }: { folder: Folder }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const active = folder.itemSort ?? null;
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: Event) => {
+      if (
+        !(event.target instanceof Node) ||
+        !ref.current?.contains(event.target)
+      )
+        setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const pick = (mode: ItemSort | null) => {
+    setOpen(false);
+    if (mode === active) return;
+    dispatch({
+      type: "updateFolder",
+      id: folder.id,
+      patch: { itemSort: mode },
+    });
+  };
+  const current =
+    SORT_MODES.find((mode) => mode.id === active)?.label ?? "Ručně";
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label={active ? `Řazení: ${current}` : "Řazení"}
+        aria-expanded={open}
+        aria-pressed={active !== null}
+        title="Řazení"
+        className={cx(
+          "grid size-8 place-items-center rounded-md",
+          active
+            ? "text-accent"
+            : "text-muted hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
+        )}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ArrowDownWideNarrow size={16} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-9 z-20 min-w-44 rounded-lg border border-line bg-raised p-1 shadow-[var(--shadow)]">
+          {SORT_MODES.map((mode) => (
+            <button
+              key={mode.label}
+              type="button"
+              role="menuitemradio"
+              aria-checked={mode.id === active}
+              className={cx(
+                "flex w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10",
+                mode.id === active && "text-accent"
+              )}
+              onClick={() => pick(mode.id)}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BoardColumn({
   status,
   folder,
@@ -1227,12 +1338,21 @@ function BoardColumn({
 }) {
   const { active } = useDndContext();
   const slot = useBoardSlot();
-  const draftRef = useRef<HTMLInputElement>(null);
+  const draftRef = useRef<HTMLTextAreaElement>(null);
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
+  useLayoutEffect(() => {
+    const node = draftRef.current;
+    if (!node) return;
+    node.style.height = "0px";
+    node.style.height = `${node.scrollHeight}px`;
+  }, [title, adding]);
   const add = () => {
-    const text = title.trim();
-    if (!text) {
+    const raw = title.replace(/\r\n/g, "\n");
+    const breakAt = raw.indexOf("\n");
+    const name = (breakAt === -1 ? raw : raw.slice(0, breakAt)).trim();
+    const body = breakAt === -1 ? "" : raw.slice(breakAt + 1).trim();
+    if (!name) {
       setAdding(false);
       return;
     }
@@ -1241,8 +1361,9 @@ function BoardColumn({
       item: newItem({
         id: nanoid(10),
         folderId: folder.id,
-        title: text,
+        title: name,
         statusId: status.id,
+        ...(body ? { body } : {}),
       }),
     });
     setTitle("");
@@ -1294,36 +1415,58 @@ function BoardColumn({
         {showMark && slot?.beforeId == null && <BoardGap />}
         {adding ? (
           <form
-            className="mb-2 flex h-10 items-center rounded-md border border-dashed border-accent bg-black/[0.04] px-3 dark:bg-white/[0.06]"
+            className="mb-2 min-h-10 rounded-md border border-dashed border-accent bg-black/[0.04] px-3 py-2.5 dark:bg-white/[0.06]"
             onSubmit={(event) => {
               event.preventDefault();
               add();
             }}
           >
-            <input
-              ref={draftRef}
-              autoFocus
-              className="h-5 w-full border-0 bg-transparent p-0 text-sm leading-5 outline-none"
-              placeholder="Název a Enter"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              onBlur={() => {
-                if (!title.trim()) setAdding(false);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.preventDefault();
-                event.stopPropagation();
-                setTitle("");
-                setAdding(false);
-              }}
-            />
+            <div className="flex items-start gap-1">
+              <textarea
+                ref={draftRef}
+                autoFocus
+                rows={1}
+                className="block min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent p-0 text-sm leading-5 outline-none"
+                placeholder="Název a Enter"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                onBlur={(event) => {
+                  if (
+                    event.relatedTarget instanceof Element &&
+                    event.relatedTarget.closest("[data-dictate]")
+                  )
+                    return;
+                  if (!title.trim()) setAdding(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setTitle("");
+                    setAdding(false);
+                    return;
+                  }
+                  if (
+                    event.key !== "Enter" ||
+                    event.shiftKey ||
+                    event.altKey ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.nativeEvent.isComposing
+                  )
+                    return;
+                  event.preventDefault();
+                  add();
+                }}
+              />
+              <DictateButton value={title} onChange={setTitle} />
+            </div>
           </form>
         ) : (
           <button
             type="button"
             aria-label={`Přidat kartu do sloupce ${status.name}`}
-            className="board-add mb-2 flex h-10 w-full items-center gap-2 rounded-md border border-dashed border-line px-3 text-sm hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
+            className="board-add mb-2 flex h-10 w-full items-center gap-2 rounded-md border border-dashed border-line bg-raised px-3 text-sm hover:bg-black/[0.05] dark:bg-white/[0.08] dark:hover:bg-white/[0.12]"
             onClick={() => setAdding(true)}
           >
             <Plus size={15} />
@@ -1363,10 +1506,8 @@ function BoardCard({ item }: { item: Item }) {
   const displaced = useDragDisplaced(isDragging);
   const tags = tagsOf(db, item.id);
   const repeat = recurrenceLabel(item);
-  const due = item.dueAt
-    ? formatDay(item.dueAt.slice(0, 10), todayKey())
-    : null;
-  const hasMeta = Boolean(due || repeat || tags.length > 0);
+  const when = whenLabel(item, todayKey());
+  const hasMeta = Boolean(when || repeat || tags.length > 0);
   return (
     <article
       ref={setNodeRef}
@@ -1407,15 +1548,16 @@ function BoardCard({ item }: { item: Item }) {
         clickItem(ui, item.id, event);
       }}
     >
-      <div className="flex h-10 items-center gap-2">
+      <div className="flex min-h-10 items-center gap-2">
         <ItemTitle
           item={item}
           dragClick={dragClick}
-          className="h-5 min-w-0 flex-1 text-sm font-medium leading-5"
+          truncate={false}
+          className="min-w-0 flex-1 py-2 text-sm font-medium leading-5"
         />
         {hasMeta && (
           <span className="flex min-w-0 shrink items-center gap-2 text-xs leading-4 text-muted">
-            {due && <span>{due}</span>}
+            {when && <span>{when}</span>}
             {repeat && <span>{repeat}</span>}
             {tags.map((tag) => (
               <Link
@@ -1431,12 +1573,11 @@ function BoardCard({ item }: { item: Item }) {
         )}
         <PriorityNudge item={item} />
       </div>
-      {byId(db.folders, item.folderId)?.system === "inbox" &&
-        isOpenItem(db, item) && (
-          <div className="w-fit pb-2 empty:hidden">
-            <FolderHint item={item} />
-          </div>
-        )}
+      {isOpenItem(db, item) && (
+        <div className="w-fit pb-2 empty:hidden">
+          <FolderHint item={item} />
+        </div>
+      )}
     </article>
   );
 }

@@ -80,6 +80,9 @@
   --danger: #8d2e1b;
   --warn: #7a4e0c;
   --done: #3f6b34;
+  --status-todo: #d23b3b;
+  --status-doing: #e2b31a;
+  --status-done: #2f9a4a;
   --shadow: 0 8px 24px rgb(40 32 24 / 6%);
   --c1: #12826c;
   --c2: #c25533;
@@ -113,6 +116,9 @@
   --danger: #ffb4a6;
   --warn: #f0c27a;
   --done: #8fbf86;
+  --status-todo: #f07167;
+  --status-doing: #f0c84a;
+  --status-done: #6fce7a;
   --shadow: 0 10px 28px rgb(0 0 0 / 28%);
   color-scheme: dark;
 }
@@ -237,7 +243,8 @@ select[class] {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -260,10 +267,37 @@ select[class] {
   scroll-snap-align: start;
 }
 
-.board-col[data-meaning="todo"] { border-top: 3px solid var(--warn); }
-.board-col[data-meaning="doing"] { border-top: 3px solid var(--accent); }
-.board-col[data-meaning="done"] { border-top: 3px solid var(--done); }
+.board-col[data-meaning="todo"] {
+  border-top: 3px solid var(--status-todo);
+  background: color-mix(in srgb, var(--status-todo) 14%, var(--panel));
+}
+.board-col[data-meaning="doing"] {
+  border-top: 3px solid var(--status-doing);
+  background: color-mix(in srgb, var(--status-doing) 16%, var(--panel));
+}
+.board-col[data-meaning="done"] {
+  border-top: 3px solid var(--status-done);
+  background: color-mix(in srgb, var(--status-done) 14%, var(--panel));
+}
 .board-col[data-meaning="cancelled"] { border-top: 3px solid var(--muted); }
+
+select[data-meaning="todo"],
+select[data-meaning="doing"],
+select[data-meaning="done"] {
+  background-color: color-mix(in srgb, var(--tone) 16%, transparent);
+  color: var(--tone);
+}
+select[data-meaning="todo"] { --tone: var(--status-todo); }
+select[data-meaning="doing"] { --tone: var(--status-doing); }
+select[data-meaning="done"] { --tone: var(--status-done); }
+select[data-meaning="todo"]:hover,
+select[data-meaning="doing"]:hover,
+select[data-meaning="done"]:hover {
+  background-color: color-mix(in srgb, var(--tone) 26%, transparent);
+}
+select[data-meaning="cancelled"] {
+  color: var(--muted);
+}
 
 .note-md :where(p, ul, ol, pre, blockquote, h1, h2, h3, h4) {
   margin: 0.35em 0;

@@ -258,7 +258,7 @@ export function Dialog({
   }, []);
   return (
     <div
-      className="fixed inset-0 z-50 grid place-items-end bg-ink/30 p-0 sm:place-items-center sm:p-6"
+      className="fixed inset-0 z-50 grid place-items-end bg-ink/15 p-0 sm:place-items-center sm:p-6"
       onMouseDown={onClose}
     >
       <div

@@ -7,10 +7,14 @@ import {
 import { ChevronRight, MoreHorizontal } from "lucide-react";
 import { nanoid } from "nanoid";
 import {
+  createContext,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import { Link, useLocation } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
@@ -90,6 +94,65 @@ function keepRowControl(event: { stopPropagation: () => void }) {
   event.stopPropagation();
 }
 
+type TreeOpen = {
+  isOpen: (id: string, depth: number) => boolean;
+  toggle: (id: string, depth: number) => void;
+  ensureOpen: (id: string) => void;
+  openOnly: (id: string) => void;
+};
+
+const TreeOpenContext = createContext<TreeOpen | null>(null);
+
+function TreeOpenProvider({
+  children,
+  openRoots = true,
+}: {
+  children: ReactNode;
+  openRoots?: boolean;
+}) {
+  const { db } = useSnap();
+  const [forced, setForced] = useState<Record<string, boolean>>({});
+  const api = useMemo<TreeOpen>(() => {
+    const startsOpen = (depth: number) => openRoots && depth < 1;
+    return {
+      isOpen(id, depth) {
+        const stored = forced[id];
+        return stored === undefined ? startsOpen(depth) : stored;
+      },
+      toggle(id, depth) {
+        setForced((current) => {
+          const stored = current[id];
+          const open = stored === undefined ? startsOpen(depth) : stored;
+          return { ...current, [id]: !open };
+        });
+      },
+      ensureOpen(id) {
+        setForced((current) =>
+          current[id] === true ? current : { ...current, [id]: true }
+        );
+      },
+      openOnly(id) {
+        const trail = new Set(folderTrail(db, id).map((folder) => folder.id));
+        const next: Record<string, boolean> = {};
+        for (const folder of db.folders) {
+          if (folder.isDeleted) continue;
+          next[folder.id] = trail.has(folder.id);
+        }
+        setForced(next);
+      },
+    };
+  }, [db, forced, openRoots]);
+  return (
+    <TreeOpenContext.Provider value={api}>{children}</TreeOpenContext.Provider>
+  );
+}
+
+function useTreeOpen() {
+  const value = useContext(TreeOpenContext);
+  if (!value) throw new Error("Strom složek nemá stav rozbalení.");
+  return value;
+}
+
 function FolderMenu({ folder }: { folder: Folder }) {
   const ui = useUi();
   const [open, setOpen] = useState(false);
@@ -123,7 +186,12 @@ function FolderMenu({ folder }: { folder: Folder }) {
     <div ref={ref}>
       <button
         type="button"
-        className="group/dots grid size-7 shrink-0 place-items-center rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
+        className={cx(
+          "grid size-7 shrink-0 place-items-center rounded-lg hover:bg-black/5 focus-visible:opacity-100 dark:hover:bg-white/10",
+          open
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100 max-lg:opacity-100"
+        )}
         aria-label="Akce složky"
         aria-expanded={open}
         aria-haspopup="menu"
@@ -140,10 +208,7 @@ function FolderMenu({ folder }: { folder: Folder }) {
           setOpen((value) => !value);
         }}
       >
-        <MoreHorizontal
-          size={16}
-          className="text-muted/40 transition-colors group-hover/dots:text-muted"
-        />
+        <MoreHorizontal size={16} className="text-muted" />
       </button>
       {open && (
         <div
@@ -203,6 +268,12 @@ function gapLabel(folders: Folder[], folder: Folder, intent: FolderDropIntent) {
   return folderDropLabel(intent, folder.name, parent?.name ?? null);
 }
 
+const treeStep = 24;
+
+export function treePad(depth: number) {
+  return 4 + depth * treeStep;
+}
+
 function FolderGap({
   depth,
   label,
@@ -221,7 +292,7 @@ function FolderGap({
         "pointer-events-none flex items-center rounded-md border-2 border-dashed border-accent bg-accent/20 px-2 text-xs font-medium text-accent",
         tall ? "h-11" : "h-9"
       )}
-      style={{ marginLeft: indent ?? 4 + depth * 12, marginRight: 4 }}
+      style={{ marginLeft: indent ?? treePad(depth), marginRight: 4 }}
     >
       <span className="min-w-0 truncate">{label}</span>
     </div>
@@ -239,7 +310,7 @@ export function FolderTree({
 }) {
   const { db } = useSnap();
   const folders = childFolders(db, parentId);
-  return (
+  const tree = (
     <div
       className="min-w-0"
       {...(parentId === null
@@ -256,6 +327,8 @@ export function FolderTree({
       ))}
     </div>
   );
+  if (parentId !== null) return tree;
+  return <TreeOpenProvider>{tree}</TreeOpenProvider>;
 }
 
 function FolderNode({
@@ -270,7 +343,8 @@ function FolderNode({
   const { db } = useSnap();
   const ui = useUi();
   const [location] = useLocation();
-  const [open, setOpen] = useState(depth < 1);
+  const tree = useTreeOpen();
+  const open = tree.isOpen(folder.id, depth);
   const children = childFolders(db, folder.id);
   const movable = folder.system !== "inbox";
   const drag = useDraggable({
@@ -308,11 +382,12 @@ function FolderNode({
     const currentId = location.slice("/folder/".length);
     if (currentId === folder.id) return;
     if (folderTrail(db, currentId).some((entry) => entry.id === folder.id))
-      setOpen(true);
+      tree.ensureOpen(folder.id);
   }, [location, folder.id]);
 
   useEffect(() => {
-    if ((placing && intent === "inside") || itemOver) setOpen(true);
+    if ((placing && intent === "inside") || itemOver)
+      tree.ensureOpen(folder.id);
   }, [placing, intent, itemOver]);
 
   return (
@@ -332,7 +407,7 @@ function FolderNode({
           drop.setNodeRef(node);
         }}
         className={cx(
-          "flex h-9 min-w-0 items-center gap-1.5 rounded-md pr-0.5",
+          "group flex h-9 min-w-0 items-center gap-1.5 rounded-md pr-0.5",
           itemOver || (placing && intent === "inside")
             ? "bg-accent-soft ring-2 ring-inset ring-accent"
             : active
@@ -341,7 +416,7 @@ function FolderNode({
           holdsReorder && "bg-accent-soft ring-1 ring-inset ring-accent",
           movable && "cursor-grab active:cursor-grabbing"
         )}
-        style={{ paddingLeft: 4 + depth * 12 }}
+        style={{ paddingLeft: treePad(depth) }}
         {...(movable ? drag.attributes : {})}
         {...(movable ? rowListeners(drag.listeners) : {})}
         tabIndex={-1}
@@ -356,7 +431,7 @@ function FolderNode({
             onPointerDown={keepRowControl}
             onMouseDown={keepRowControl}
             onTouchStart={keepRowControl}
-            onClick={() => setOpen((value) => !value)}
+            onClick={() => tree.toggle(folder.id, depth)}
           >
             <ChevronRight
               size={16}
@@ -376,10 +451,10 @@ function FolderNode({
             }
             if (children.length > 0 && active) {
               event.preventDefault();
-              setOpen((value) => !value);
+              tree.toggle(folder.id, depth);
               return;
             }
-            if (children.length > 0) setOpen(true);
+            tree.openOnly(folder.id);
             ui.setMenuOpen(false);
             ui.select(null);
           }}
@@ -420,15 +495,22 @@ export function FolderChildren({ parentId }: { parentId: string }) {
   const folders = childFolders(db, parentId);
   if (folders.length === 0) return null;
   return (
-    <div
-      className="mb-4 grid gap-0.5"
-      data-folder-tree=""
-      data-folder-scope="page"
-    >
-      {folders.map((folder) => (
-        <PageFolderRow key={folder.id} folder={folder} scope="page" depth={0} />
-      ))}
-    </div>
+    <TreeOpenProvider openRoots={false}>
+      <div
+        className="mb-4 grid gap-0.5"
+        data-folder-tree=""
+        data-folder-scope="page"
+      >
+        {folders.map((folder) => (
+          <PageFolderRow
+            key={folder.id}
+            folder={folder}
+            scope="page"
+            depth={0}
+          />
+        ))}
+      </div>
+    </TreeOpenProvider>
   );
 }
 
@@ -443,7 +525,8 @@ function PageFolderRow({
 }) {
   const { db } = useSnap();
   const [location] = useLocation();
-  const [open, setOpen] = useState(depth < 1);
+  const tree = useTreeOpen();
+  const open = tree.isOpen(folder.id, depth);
   const children = childFolders(db, folder.id);
   const drag = useDraggable({
     id: `page-folder:${folder.id}`,
@@ -473,7 +556,7 @@ function PageFolderRow({
     const currentId = location.slice("/folder/".length);
     if (currentId === folder.id) return;
     if (folderTrail(db, currentId).some((entry) => entry.id === folder.id))
-      setOpen(true);
+      tree.ensureOpen(folder.id);
   }, [location, folder.id]);
   return (
     <div
@@ -513,7 +596,7 @@ function PageFolderRow({
             onPointerDown={keepRowControl}
             onMouseDown={keepRowControl}
             onTouchStart={keepRowControl}
-            onClick={() => setOpen((value) => !value)}
+            onClick={() => tree.toggle(folder.id, depth)}
           >
             <ChevronRight
               size={16}
@@ -533,16 +616,14 @@ function PageFolderRow({
             }
             if (children.length > 0 && active) {
               event.preventDefault();
-              setOpen((value) => !value);
+              tree.toggle(folder.id, depth);
               return;
             }
-            if (children.length > 0) setOpen(true);
+            tree.openOnly(folder.id);
           }}
         >
           <Dot color={folder.color} icon={folder.icon} />
-          <span className="min-w-0 flex-1 truncate font-medium">
-            {folder.name}
-          </span>
+          <span className="min-w-0 flex-1 truncate">{folder.name}</span>
           {count > 0 && <span className="text-xs text-muted">{count}</span>}
         </Link>
       </div>
@@ -740,6 +821,7 @@ export function FolderDialog() {
   const [view, setView] = useState<ViewMode>("list");
   const [parentId, setParentId] = useState<string | null>(null);
   const [statusesOpen, setStatusesOpen] = useState(false);
+  const [columnsOpen, setColumnsOpen] = useState(false);
 
   useEffect(() => {
     if (!edit) return;
@@ -753,6 +835,7 @@ export function FolderDialog() {
     setView(current?.defaultView ?? "list");
     setParentId(current?.parentId ?? edit.parentId);
     setStatusesOpen(false);
+    setColumnsOpen(false);
   }, [edit]);
 
   if (!edit) return null;
@@ -914,13 +997,17 @@ export function FolderDialog() {
           />
           <span className="text-muted">Vlastní barva</span>
         </label>
-        <Field label="Klíčová slova pro návrhy">
+        <Field label="Klíčová slova">
           <input
             className={control}
             value={keywords}
             placeholder="dveře, okna, míry"
             onChange={(event) => setKeywords(event.target.value)}
           />
+          <span className="text-xs leading-4 text-muted">
+            Když je některé z těchto slov v názvu úkolu, nabídne se tahle složka
+            k zařazení. Stejně funguje i samotný název složky.
+          </span>
         </Field>
         <Field label="Výchozí pohled">
           <select
@@ -986,82 +1073,90 @@ export function FolderDialog() {
                 </Field>
               </div>
             )}
-            {statuses.map((status, index) => (
-              <div
-                key={status.id}
-                className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2"
+            <Disclosure
+              open={columnsOpen}
+              label="Stavy"
+              onClick={() => setColumnsOpen((open) => !open)}
+            />
+            {columnsOpen &&
+              statuses.map((status, index) => (
+                <div
+                  key={status.id}
+                  className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2"
+                >
+                  <input
+                    className={control}
+                    value={status.name}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "updateStatus",
+                        id: status.id,
+                        name: event.target.value,
+                      })
+                    }
+                  />
+                  <select
+                    className={control}
+                    value={status.meaning}
+                    onChange={(event) =>
+                      dispatch({
+                        type: "updateStatus",
+                        id: status.id,
+                        meaning: event.target.value as StatusMeaning,
+                      })
+                    }
+                  >
+                    <option value="todo">K udělání</option>
+                    <option value="doing">Dělám</option>
+                    <option value="done">Hotovo</option>
+                    <option value="cancelled">Zrušeno</option>
+                    <option value="none">Nezařazeno</option>
+                  </select>
+                  <Button
+                    onClick={() => {
+                      if (index === 0) return;
+                      const ids = statuses.map((entry) => entry.id);
+                      const next = [...ids];
+                      const previous = next[index - 1];
+                      const current = next[index];
+                      if (!previous || !current) return;
+                      next[index - 1] = current;
+                      next[index] = previous;
+                      dispatch({
+                        type: "reorderStatuses",
+                        folderId: folder.id,
+                        orderedIds: next,
+                      });
+                    }}
+                  >
+                    Výš
+                  </Button>
+                  <Button
+                    tone="danger"
+                    onClick={() =>
+                      dispatch({ type: "deleteStatus", id: status.id })
+                    }
+                    disabled={statuses.length < 2}
+                  >
+                    Smazat
+                  </Button>
+                </div>
+              ))}
+            {columnsOpen && (
+              <Button
+                onClick={() =>
+                  dispatch({
+                    type: "createStatus",
+                    id: nanoid(10),
+                    folderId: folder.id,
+                    name: "Nový stav",
+                    meaning: "none",
+                  })
+                }
               >
-                <input
-                  className={control}
-                  value={status.name}
-                  onChange={(event) =>
-                    dispatch({
-                      type: "updateStatus",
-                      id: status.id,
-                      name: event.target.value,
-                    })
-                  }
-                />
-                <select
-                  className={control}
-                  value={status.meaning}
-                  onChange={(event) =>
-                    dispatch({
-                      type: "updateStatus",
-                      id: status.id,
-                      meaning: event.target.value as StatusMeaning,
-                    })
-                  }
-                >
-                  <option value="todo">K udělání</option>
-                  <option value="doing">Dělám</option>
-                  <option value="done">Hotovo</option>
-                  <option value="cancelled">Zrušeno</option>
-                  <option value="none">Nezařazeno</option>
-                </select>
-                <Button
-                  onClick={() => {
-                    if (index === 0) return;
-                    const ids = statuses.map((entry) => entry.id);
-                    const next = [...ids];
-                    const previous = next[index - 1];
-                    const current = next[index];
-                    if (!previous || !current) return;
-                    next[index - 1] = current;
-                    next[index] = previous;
-                    dispatch({
-                      type: "reorderStatuses",
-                      folderId: folder.id,
-                      orderedIds: next,
-                    });
-                  }}
-                >
-                  Výš
-                </Button>
-                <Button
-                  tone="danger"
-                  onClick={() =>
-                    dispatch({ type: "deleteStatus", id: status.id })
-                  }
-                  disabled={statuses.length < 2}
-                >
-                  Smazat
-                </Button>
-              </div>
-            ))}
-            <Button
-              onClick={() =>
-                dispatch({
-                  type: "createStatus",
-                  id: nanoid(10),
-                  folderId: folder.id,
-                  name: "Nový stav",
-                  meaning: "none",
-                })
-              }
-            >
-              Přidat stav
-            </Button>
+                Přidat stav
+              </Button>
+            )}
           </div>
         )}
         <div className="flex flex-wrap gap-2">

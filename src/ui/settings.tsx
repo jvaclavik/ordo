@@ -1,15 +1,20 @@
 import { nanoid } from "nanoid";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { getSyncView, joinSync, subscribeSync } from "../data/sync.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
+import {
+  getSyncView,
+  joinSync,
+  setSyncEnabled,
+  subscribeSync,
+} from "../data/sync.ts";
 import { todayKey } from "../domain/dates.ts";
 import { alive, byId, inboxFolder, isValidDb } from "../domain/db.ts";
 import { orderedRules } from "../domain/rules.ts";
 import { activeFolders } from "../domain/select.ts";
+import { FolderPicker } from "./folderPick.tsx";
 import { useUi } from "./state.tsx";
 import { ThemeSwitch } from "./theme.tsx";
 import { Button, control, Field, modLabel } from "./ui.tsx";
-import { FolderPicker } from "./folderPick.tsx";
 
 export function SettingsPage() {
   const { db } = useSnap();
@@ -26,7 +31,8 @@ export function SettingsPage() {
       <header>
         <h1 className="font-display text-3xl">Nastavení</h1>
         <p className="text-muted">
-          Data zůstávají v prohlížeči na každém zařízení a mezi sebou se synchronizují sama.
+          Data zůstávají v tomhle prohlížeči. Synchronizaci mezi zařízeními
+          zapneš níže.
         </p>
       </header>
       <SyncPanel />
@@ -124,7 +130,6 @@ export function SettingsPage() {
   );
 }
 
-
 function SyncPanel() {
   const sync = useSyncExternalStore(subscribeSync, getSyncView, getSyncView);
   const ui = useUi();
@@ -133,53 +138,67 @@ function SyncPanel() {
     sync.phase === "offline"
       ? "Teď bez spojení. Až se vrátí, zařízení si data znovu vymění."
       : sync.phase === "error"
-        ? (sync.detail ?? "Synchronizace se nepovedla.")
-        : sync.phase === "synced"
-          ? "Synchronizováno. Kopie je v tomhle prohlížeči."
-          : sync.mnemonic
-            ? "Synchronizace běží."
-            : "Synchronizace se připravuje.";
+      ? sync.detail ?? "Synchronizace se nepovedla."
+      : sync.phase === "synced"
+      ? "Synchronizováno. Kopie je v tomhle prohlížeči."
+      : sync.mnemonic
+      ? "Synchronizace běží."
+      : "Synchronizace se připravuje.";
   return (
     <section className="grid gap-3">
       <h2 className="font-display text-2xl">Synchronizace</h2>
       <p className="text-sm text-muted" role="status">
-        {phase}
+        {sync.enabled
+          ? phase
+          : "Vypnutá. Úkoly zůstávají jen v tomhle prohlížeči a nikam se neposílají."}
       </p>
-      <p className="text-sm text-muted">
-        Evolu HQ je jen přenos a jednou za čas se smaže. Úkoly zůstávají uložené
-        na každém zařízení se stejným kódem. Po smazání si je zařízení při
-        příštím otevření znovu nahrají a doplní si, co druhému chybí.
-      </p>
-      <Field label="Kód tohoto zařízení">
-        <textarea
-          className={control}
-          readOnly
-          rows={3}
-          value={sync.mnemonic}
-          aria-label="Synchronizační kód"
-          onFocus={(event) => event.currentTarget.select()}
-        />
-      </Field>
-      <form
-        className="grid gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const error = joinSync(code);
-          if (error) ui.pushToast(error);
-        }}
+      <Button
+        tone={sync.enabled ? "ghost" : "solid"}
+        aria-pressed={sync.enabled}
+        onClick={() => setSyncEnabled(!sync.enabled)}
       >
-        <Field label="Připojit jiné zařízení">
-          <textarea
-            className={control}
-            rows={3}
-            value={code}
-            placeholder="Vlož kód z druhého zařízení"
-            aria-label="Kód z druhého zařízení"
-            onChange={(event) => setCode(event.target.value)}
-          />
-        </Field>
-        <Button type="submit">Připojit</Button>
-      </form>
+        {sync.enabled ? "Vypnout synchronizaci" : "Zapnout synchronizaci"}
+      </Button>
+      {sync.enabled && (
+        <>
+          <p className="text-sm text-muted">
+            Evolu HQ je jen přenos a jednou za čas se smaže. Úkoly zůstávají
+            uložené na každém zařízení se stejným kódem. Po smazání si je
+            zařízení při příštím otevření znovu nahrají a doplní si, co druhému
+            chybí.
+          </p>
+          <Field label="Kód tohoto zařízení">
+            <textarea
+              className={control}
+              readOnly
+              rows={3}
+              value={sync.mnemonic}
+              aria-label="Synchronizační kód"
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </Field>
+          <form
+            className="grid gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const error = joinSync(code);
+              if (error) ui.pushToast(error);
+            }}
+          >
+            <Field label="Připojit jiné zařízení">
+              <textarea
+                className={control}
+                rows={3}
+                value={code}
+                placeholder="Vlož kód z druhého zařízení"
+                aria-label="Kód z druhého zařízení"
+                onChange={(event) => setCode(event.target.value)}
+              />
+            </Field>
+            <Button type="submit">Připojit</Button>
+          </form>
+        </>
+      )}
     </section>
   );
 }

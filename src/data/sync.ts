@@ -45,20 +45,32 @@ const docsQuery = createQuery((db) =>
 );
 
 const mnemonicKey = "ordo-sync-mnemonic";
+const enabledKey = "ordo-sync-enabled";
 
 export type SyncView = {
+  enabled: boolean;
   mnemonic: string;
   phase: "idle" | "syncing" | "synced" | "offline" | "error";
   detail: string | null;
 };
 
 const listeners = new Set<() => void>();
-let view: SyncView = { mnemonic: "", phase: "idle", detail: null };
+let view: SyncView = {
+  enabled: syncPreference(),
+  mnemonic: "",
+  phase: "idle",
+  detail: null,
+};
 let evolu: Evolu<typeof SyncSchema> | null = null;
 let deps: ReturnType<typeof createEvoluDeps> | null = null;
 let written = new Map<string, string>();
 let onRemote: ((db: Db) => void) | null = null;
+let readLocal: (() => Db) | null = null;
+let unlistenQuery: (() => void) | null = null;
+let unlistenStatus: (() => void) | null = null;
 let pushEnabled = false;
+let acceptRemote = false;
+let session = 0;
 
 function emit() {
   for (const listener of listeners) listener();
@@ -76,6 +88,18 @@ export function subscribeSync(listener: () => void) {
 function setView(patch: Partial<SyncView>) {
   view = { ...view, ...patch };
   emit();
+}
+
+function syncPreference(): boolean {
+  try {
+    return localStorage.getItem(enabledKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveSyncPreference(on: boolean) {
+  localStorage.setItem(enabledKey, on ? "1" : "0");
 }
 
 function storedMnemonic(): string | null {
@@ -152,6 +176,7 @@ function remember(rows: readonly SyncRow[]) {
 }
 
 function publish(rows: readonly SyncRow[]) {
+  if (!acceptRemote) return;
   const db = dbFromRows(rows);
   if (!db || !onRemote) return;
   remember(rows);
@@ -208,6 +233,7 @@ export function noteLocal(db: Db) {
   try {
     writeDiff(db);
   } catch (error) {
+    if (!pushEnabled || !evolu) return;
     setView({
       phase: "error",
       detail:
@@ -217,7 +243,7 @@ export function noteLocal(db: Db) {
 }
 
 function refreshStatus() {
-  if (!deps) return;
+  if (!syncPreference() || !evolu || !deps) return;
   const state = deps.syncState.get();
   const transports = (state?.transports ?? []) as Array<{
     connection: { type: string };
@@ -263,6 +289,7 @@ function watchNetwork(readLocal: () => Db, apply: (db: Db) => void) {
   if (watching) return;
   watching = true;
   const again = () => {
+    if (!syncPreference()) return;
     if (evolu) request();
     else void startSync(readLocal, apply);
   };
@@ -273,44 +300,99 @@ function watchNetwork(readLocal: () => Db, apply: (db: Db) => void) {
   window.setInterval(again, 60_000);
 }
 
-export async function startSync(readLocal: () => Db, apply: (db: Db) => void) {
+async function disposeEvolu(instance: Evolu<typeof SyncSchema>) {
+  const token = (Symbol as unknown as { asyncDispose?: symbol }).asyncDispose;
+  if (!token) return;
+  const dispose = (instance as unknown as Record<symbol, () => Promise<void>>)[
+    token
+  ];
+  if (dispose) await dispose.call(instance);
+}
+
+async function stopSync() {
+  session += 1;
+  pushEnabled = false;
+  acceptRemote = false;
+  unlistenQuery?.();
+  unlistenQuery = null;
+  unlistenStatus?.();
+  unlistenStatus = null;
+  const current = evolu;
+  evolu = null;
+  written = new Map();
+  setView({ enabled: false, mnemonic: "", phase: "idle", detail: null });
+  if (current) await disposeEvolu(current);
+}
+
+export function setSyncEnabled(on: boolean) {
+  try {
+    saveSyncPreference(on);
+  } catch {
+    setView({
+      phase: "error",
+      detail: "Nastavení se nepodařilo uložit.",
+    });
+    return;
+  }
+  if (!on) {
+    void stopSync();
+    return;
+  }
+  setView({ enabled: true, phase: "syncing", detail: null });
+  if (readLocal && onRemote) void startSync(readLocal, onRemote);
+}
+
+export async function startSync(read: () => Db, apply: (db: Db) => void) {
+  readLocal = read;
   onRemote = apply;
-  watchNetwork(readLocal, apply);
+  if (!syncPreference()) return;
+  const ticket = session;
+  watchNetwork(read, apply);
   if (evolu || opening) {
     request();
     return;
   }
   opening = true;
   try {
-    deps = createEvoluDeps();
+    deps ??= createEvoluDeps();
     const owner = loadOwner();
     const run = createRun(deps);
-    evolu = await run.ok(
+    const created = await run.ok(
       createEvolu(SyncSchema, {
         appName,
         appOwner: owner,
       })
     );
+    if (ticket !== session || !syncPreference()) {
+      await disposeEvolu(created);
+      return;
+    }
+    evolu = created;
     saveMnemonic(evolu.appOwner.mnemonic);
     setView({
+      enabled: true,
       mnemonic: evolu.appOwner.mnemonic,
       phase: "syncing",
       detail: null,
     });
-    deps.syncState.subscribe(refreshStatus);
+    unlistenStatus = deps.syncState.subscribe(refreshStatus);
     await evolu.loadQuery(docsQuery);
+    if (ticket !== session || !syncPreference()) return;
     remember(readRows());
-    evolu.subscribeQuery(docsQuery)(() => {
+    unlistenQuery = evolu.subscribeQuery(docsQuery)(() => {
       publish(readRows());
     });
+    acceptRemote = true;
     pushEnabled = true;
     const initial = dbFromRows(readRows());
     if (initial) apply(initial);
-    else mergeLocal(readLocal());
+    else mergeLocal(read());
     request();
     refreshStatus();
   } catch (error) {
+    if (ticket !== session || !syncPreference()) return;
     setView({
+      enabled: true,
       phase: navigator.onLine ? "error" : "offline",
       detail: navigator.onLine
         ? error instanceof Error

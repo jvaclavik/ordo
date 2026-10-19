@@ -5,6 +5,7 @@ import { newItem } from "./factory.ts";
 import {
   hashAtCaret,
   opsFromQuickAdd,
+  opsFromTaskDraft,
   opsFromTaskLines,
   parseQuickAdd,
   slashAtCaret,
@@ -310,6 +311,50 @@ describe("rychlé přidání", () => {
     expect(byId(saved.items, "beton")?.planUntil).toBe("2027-01-16");
     expect(byId(saved.items, "beton")?.dueAt).toBeNull();
   });
+
+  it("nastavení termínu zruší plán a naopak", () => {
+    const base = ctx();
+    let db = freshDb(base);
+    const inbox = db.folders[0]!;
+    db = reduce(
+      db,
+      {
+        type: "createItem",
+        item: newItem({
+          id: "kdy",
+          folderId: inbox.id,
+          title: "Kdy",
+          plannedFor: "2026-10-20",
+          planUntil: "2026-10-25",
+        }),
+      },
+      base
+    );
+    db = reduce(
+      db,
+      {
+        type: "updateItem",
+        id: "kdy",
+        patch: { dueAt: "2026-10-21T09:00", dueHasTime: true },
+      },
+      base
+    );
+    expect(byId(db.items, "kdy")?.dueAt).toBe("2026-10-21T09:00");
+    expect(byId(db.items, "kdy")?.plannedFor).toBeNull();
+    expect(byId(db.items, "kdy")?.planUntil).toBeNull();
+    db = reduce(
+      db,
+      {
+        type: "updateItem",
+        id: "kdy",
+        patch: { plannedFor: "2026-10-24", planUntil: null },
+      },
+      base
+    );
+    expect(byId(db.items, "kdy")?.plannedFor).toBe("2026-10-24");
+    expect(byId(db.items, "kdy")?.dueAt).toBeNull();
+    expect(byId(db.items, "kdy")?.dueHasTime).toBe(false);
+  });
 });
 
 describe("opakování", () => {
@@ -330,6 +375,14 @@ describe("opakování", () => {
         until: null,
       })
     ).toBe("2026-10-19");
+    expect(
+      nextOccurrence(today, {
+        freq: "yearly",
+        interval: 1,
+        weekdays: [],
+        until: null,
+      })
+    ).toBe("2027-10-16");
   });
 
   it("dokončení založí další výskyt a odškrtnutí ho vezme zpět", () => {
@@ -627,6 +680,31 @@ describe("pravidla a vazby", () => {
       base
     );
     expect(byId(db.folders, "parent")?.parentId).toBeNull();
+  });
+});
+
+describe("úkol s popisem", () => {
+  it("první řádek je název a zbytek popis", () => {
+    const base = ctx();
+    const db = freshDb(base);
+    const inbox = db.folders[0]!;
+    const { ops, itemIds } = opsFromTaskDraft(
+      db,
+      "Koupit chleba\nještě v pekárně",
+      {
+        folderId: inbox.id,
+        statusId: null,
+        dateRole: "due",
+        applyRules: false,
+        ids: base.id,
+        today,
+      }
+    );
+    const next = ops.reduce((state, op) => reduce(state, op, base), db);
+    expect(itemIds).toHaveLength(1);
+    const item = byId(next.items, itemIds[0] ?? "");
+    expect(item?.title).toBe("Koupit chleba");
+    expect(item?.body).toBe("ještě v pekárně");
   });
 });
 

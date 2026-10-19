@@ -55,7 +55,16 @@ import {
   visibleTaskIds,
 } from "./tasks.tsx";
 import { ThemeSync } from "./theme.tsx";
-import { Button, cx, Dialog, IconButton, layerOpen, modLabel, TagMark } from "./ui.tsx";
+import {
+  Button,
+  cx,
+  Dialog,
+  IconButton,
+  layerOpen,
+  modLabel,
+  TagMark,
+} from "./ui.tsx";
+import { jumpWordInField, wordJumpTarget } from "./wordCaret.ts";
 
 export function Shell() {
   return (
@@ -198,14 +207,18 @@ function useOnline() {
 function SyncNote() {
   const online = useOnline();
   const sync = useSyncExternalStore(subscribeSync, getSyncView, getSyncView);
+  if (!sync.enabled) return null;
   const offline = !online || sync.phase === "offline";
   if (!offline && sync.phase !== "error") return null;
   return (
-    <p className="mb-4 rounded-md bg-black/[0.04] px-3 py-2 text-sm text-muted dark:bg-white/[0.06]" role="status">
+    <p
+      className="mb-4 rounded-md bg-black/[0.04] px-3 py-2 text-sm text-muted dark:bg-white/[0.06]"
+      role="status"
+    >
       {offline
         ? "Bez spojení. Úpravy zůstanou v tomhle zařízení a synchronizují se, až se spojení vrátí."
-        : (sync.detail ??
-          "Synchronizace se nepovedla. Úpravy jsou uložené v tomhle zařízení.")}
+        : sync.detail ??
+          "Synchronizace se nepovedla. Úpravy jsou uložené v tomhle zařízení."}
     </p>
   );
 }
@@ -220,11 +233,11 @@ function Frame() {
 
   return (
     <div
-      className="relative min-h-dvh lg:grid lg:grid-cols-[var(--sidebar)_minmax(0,1fr)]"
+      className="relative min-h-dvh lg:grid lg:h-dvh lg:grid-cols-[var(--sidebar)_minmax(0,1fr)] lg:overflow-hidden"
       style={{ "--sidebar": `${sidebar.width}px` } as CSSProperties}
     >
       <Hotkeys />
-      <aside className="hidden min-w-0 border-r border-line bg-panel lg:block">
+      <aside className="hidden min-w-0 border-r border-line bg-panel lg:block lg:h-full lg:min-h-0 lg:overflow-hidden">
         <Sidebar />
       </aside>
       <SidebarEdge
@@ -246,7 +259,7 @@ function Frame() {
           </div>
         </div>
       )}
-      <div className="min-w-0">
+      <div className="min-w-0 lg:h-full lg:min-h-0 lg:overflow-y-auto">
         <main className="min-w-0 px-4 pb-24 pt-5 lg:px-8 lg:pb-12 lg:pt-6">
           {(snap.memoryOnly || snap.persistError) && (
             <p className="mb-4 rounded-md bg-warn/15 px-3 py-2 text-sm">
@@ -536,11 +549,15 @@ function Hotkeys() {
         (event.key === "Delete" || event.key === "Backspace") &&
         !event.repeat
       ) {
+        const focused = target?.closest<HTMLElement>("[data-task-id]")?.dataset
+          .taskId;
         const ids =
           ui.picked.length > 0
             ? ui.picked
             : ui.selectedId
             ? [ui.selectedId]
+            : focused
+            ? [focused]
             : [];
         const items = ids.flatMap((id) => {
           const item = byId(snap.db.items, id);
@@ -555,8 +572,26 @@ function Hotkeys() {
         });
       }
     };
+    const onWord = (event: KeyboardEvent) => {
+      if (event.isComposing || event.defaultPrevented) return;
+      if (!event.altKey || event.metaKey || event.ctrlKey) return;
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const field = wordJumpTarget(event.target);
+      if (!field) return;
+      event.preventDefault();
+      event.stopPropagation();
+      jumpWordInField(
+        field,
+        event.key === "ArrowRight" ? 1 : -1,
+        event.shiftKey
+      );
+    };
+    window.addEventListener("keydown", onWord, true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onWord, true);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [ui, location, snap]);
   return null;
 }
@@ -846,7 +881,11 @@ function Sidebar() {
         <p className="px-3 font-display text-3xl leading-none text-ink">Ordo</p>
         <nav className="grid gap-1">
           <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
-          <Side href="/calendar" label="Kalendář" icon={<Calendar size={18} />} />
+          <Side
+            href="/calendar"
+            label="Kalendář"
+            icon={<Calendar size={18} />}
+          />
           <Side href="/people" label="Lidé" icon={<Users size={18} />} />
         </nav>
       </div>
@@ -924,7 +963,9 @@ function TagChip({
       }}
     >
       <TagMark name={name} color={color} />
-      <span className="sr-only">, filtr položek. Přetažením úkolu se přidá.</span>
+      <span className="sr-only">
+        , filtr položek. Přetažením úkolu se přidá.
+      </span>
     </Link>
   );
 }

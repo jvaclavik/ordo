@@ -36,6 +36,8 @@ export function nextOccurrence(fromDay: string, rule: Recurrence): string | null
   let next: string;
   if (rule.freq === "monthly") {
     next = addMonths(fromDay, interval);
+  } else if (rule.freq === "yearly") {
+    next = addMonths(fromDay, interval * 12);
   } else if (rule.freq === "weekly") {
     const days = rule.weekdays.length > 0 ? rule.weekdays : [isoWeekday(fromDay)];
     if (interval === 1) {
@@ -59,6 +61,17 @@ function scanWeekdays(fromDay: string, days: number[], startOffset: number): str
   return null;
 }
 
+export type RepeatPreset = "never" | "daily" | "weekly" | "monthly" | "yearly" | "custom";
+
+export function recurrencePreset(rule: Recurrence | null, anchorDay: string): RepeatPreset {
+  if (!rule) return "never";
+  if (rule.until || rule.interval !== 1 || rule.freq === "interval") return "custom";
+  if (rule.freq === "daily" || rule.freq === "monthly" || rule.freq === "yearly") return rule.freq;
+  if (rule.weekdays.length === 0) return "weekly";
+  if (rule.weekdays.length === 1 && rule.weekdays[0] === isoWeekday(anchorDay)) return "weekly";
+  return "custom";
+}
+
 const WEEKDAY_SHORT = ["", "po", "út", "st", "čt", "pá", "so", "ne"];
 
 export function recurrenceLabel(item: Item): string | null {
@@ -69,6 +82,9 @@ export function recurrenceLabel(item: Item): string | null {
   }
   if (rule.freq === "monthly") {
     return rule.interval === 1 ? "každý měsíc" : `každých ${rule.interval} měsíců`;
+  }
+  if (rule.freq === "yearly") {
+    return rule.interval === 1 ? "každý rok" : `každých ${rule.interval} let`;
   }
   const days = rule.weekdays.map((day) => WEEKDAY_SHORT[day] ?? "").filter(Boolean);
   const dayLabel = days.length > 0 ? ` ${days.join(" ")}` : "";

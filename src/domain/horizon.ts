@@ -2,6 +2,8 @@ import {
   addDays,
   addMonths,
   dateKey,
+  dueDateKey,
+  dueTime,
   formatDay,
   isoWeekday,
   parseDateKey,
@@ -120,6 +122,24 @@ export function horizonPresets(today: string): Array<Horizon & { id: string }> {
     { id: "autumn", ...season(today, "podzim") },
     { id: "winter", ...season(today, "zima") },
   ];
+}
+
+export function whenLabel(
+  item: {
+    dueAt: string | null;
+    dueHasTime: boolean;
+    plannedFor: string | null;
+    planUntil?: string | null;
+  },
+  today: string
+): string | null {
+  const due = dueDateKey(item.dueAt);
+  if (due) {
+    const time = dueTime(item.dueAt, item.dueHasTime);
+    return time ? `${formatDay(due, today)} ${time}` : formatDay(due, today);
+  }
+  if (!item.plannedFor) return null;
+  return planLabel(item.plannedFor, item.planUntil, today);
 }
 
 export function planLabel(

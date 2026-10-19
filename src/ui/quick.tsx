@@ -1,3 +1,4 @@
+import { Check } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { dispatch, useSnap } from "../data/store.tsx";
@@ -5,10 +6,9 @@ import { formatDay, todayKey } from "../domain/dates.ts";
 import { byId, inboxFolder, resolvedOpen } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
 import { splitNoteDraft } from "../domain/noteIntent.ts";
-import type { DateRole } from "../domain/op.ts";
 import {
   lineAt,
-  opsFromTaskLines,
+  opsFromTaskDraft,
   parseQuickAdd,
   slashQueryExact,
   suggestSlashFolders,
@@ -24,6 +24,7 @@ import {
   folderTrail,
   suggestFolders,
 } from "../domain/select.ts";
+import { DictateButton } from "./dictate.tsx";
 import { Dot } from "./folders.tsx";
 import { useUi, type QuickKind } from "./state.tsx";
 import { Button, control, cx, Dialog, TagMark } from "./ui.tsx";
@@ -35,7 +36,6 @@ export function QuickAdd() {
   const [text, setText] = useState(quick?.text ?? "");
   const [kind, setKind] = useState<QuickKind>(quick?.kind ?? "task");
   const [caret, setCaret] = useState((quick?.text ?? "").length);
-  const [role, setRole] = useState<DateRole>("due");
   const [folderOverride, setFolderOverride] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
@@ -75,10 +75,8 @@ export function QuickAdd() {
     node.setSelectionRange(next, next);
     setCaret(next);
   }, [text]);
-  const currentFolderId =
-    parsed.folderId ?? folderOverride ?? quick?.folderId ?? null;
   const suggestions = suggestFolders(db, parsed.title).filter(
-    (folder) => folder.id !== currentFolderId
+    (folder) => folder.id !== (parsed.folderId ?? quick?.folderId ?? null)
   );
   if (!quick) return null;
 
@@ -128,10 +126,10 @@ export function QuickAdd() {
       quick.statusId && quick.folderId === folder.id
         ? quick.statusId
         : resolvedOpen(db, folder)?.id ?? null;
-    const { ops, itemIds } = opsFromTaskLines(db, text, {
+    const { ops, itemIds } = opsFromTaskDraft(db, text, {
       folderId: folder.id,
       statusId,
-      dateRole: role,
+      dateRole: "due",
       applyRules: folder.system === "inbox",
       ids: () => nanoid(10),
       today,
@@ -234,23 +232,55 @@ export function QuickAdd() {
           </button>
         ))}
       </div>
-      <textarea
-        ref={area}
-        autoFocus
-        className={`${control} min-h-28`}
-        placeholder={
-          kind === "note" ? "První řádek je název." : "Jeden úkol na řádek."
-        }
-        value={text}
-        onChange={(event) => {
-          setText(event.target.value);
-          setCaret(event.target.selectionStart ?? 0);
-        }}
-        onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
-        onKeyDown={(event) => {
-          if (onSuggestKey(event.nativeEvent)) event.stopPropagation();
-        }}
-      />
+      <div className="relative">
+        <textarea
+          ref={area}
+          autoFocus
+          className={cx(control, "min-h-28", kind === "task" && "pr-12")}
+          placeholder={
+            kind === "note"
+              ? "První řádek je název."
+              : "První řádek je název. Shift+Enter přidá popis."
+          }
+          value={text}
+          onChange={(event) => {
+            setText(event.target.value);
+            setCaret(event.target.selectionStart ?? 0);
+          }}
+          onSelect={(event) =>
+            setCaret(event.currentTarget.selectionStart ?? 0)
+          }
+          onKeyDown={(event) => {
+            if (onSuggestKey(event.nativeEvent)) {
+              event.stopPropagation();
+              return;
+            }
+            if (
+              kind !== "task" ||
+              event.key !== "Enter" ||
+              event.shiftKey ||
+              event.altKey ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.nativeEvent.isComposing
+            )
+              return;
+            event.preventDefault();
+            submit();
+          }}
+        />
+        {kind === "task" && (
+          <div className="absolute right-1.5 bottom-1.5">
+            <DictateButton
+              value={text}
+              onChange={(next) => {
+                setText(next);
+                setCaret(next.length);
+              }}
+            />
+          </div>
+        )}
+      </div>
       {kind === "task" && suggesting && token?.kind === "folder" && (
         <div
           role="listbox"
@@ -307,65 +337,52 @@ export function QuickAdd() {
         </div>
       )}
       {kind === "task" && (
-      <div className="mt-3 flex flex-wrap gap-1">
-        {parsed.chips
-          .filter(
-            (chip) =>
-              !(
-                suggesting &&
-                token &&
-                ((chip.kind === "folderMissing" && token.kind === "folder") ||
-                  (chip.kind === "tag" && token.kind === "tag")) &&
-                chip.start >= token.start &&
-                chip.end <= token.end
-              )
-          )
-          .map((chip) => (
-            <button
-              key={`${chip.kind}-${chip.start}`}
-              type="button"
-              className="rounded-sm bg-accent-soft px-2 py-1 text-xs text-accent"
-              onClick={() => removeChip(chip)}
-            >
-              {chip.kind === "date"
-                ? formatDay(chip.label, today)
-                : chip.kind === "horizon"
-                ? `plán ${chip.label}`
-                : chip.label}{" "}
-              ×
-            </button>
-          ))}
-      </div>
-      )}
-      {kind === "task" && parsed.dueDay && (
-        <div className="mt-3 flex gap-2">
-          <Button
-            tone={role === "due" ? "soft" : "ghost"}
-            onClick={() => setRole("due")}
-          >
-            Termín
-          </Button>
-          <Button
-            tone={role === "plan" ? "soft" : "ghost"}
-            onClick={() => setRole("plan")}
-          >
-            Plán
-          </Button>
+        <div className="mt-3 flex flex-wrap gap-1">
+          {parsed.chips
+            .filter(
+              (chip) =>
+                !(
+                  suggesting &&
+                  token &&
+                  ((chip.kind === "folderMissing" && token.kind === "folder") ||
+                    (chip.kind === "tag" && token.kind === "tag")) &&
+                  chip.start >= token.start &&
+                  chip.end <= token.end
+                )
+            )
+            .map((chip) => (
+              <button
+                key={`${chip.kind}-${chip.start}`}
+                type="button"
+                className="rounded-sm bg-accent-soft px-2 py-1 text-xs text-accent"
+                onClick={() => removeChip(chip)}
+              >
+                {chip.kind === "date"
+                  ? formatDay(chip.label, today)
+                  : chip.label}{" "}
+                ×
+              </button>
+            ))}
         </div>
       )}
       {kind === "task" && suggestions.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1">
-          {suggestions.map((folder) => (
-            <Button
-              key={folder.id}
-              tone={folderOverride === folder.id ? "soft" : "ghost"}
-              onClick={() => setFolderOverride(folder.id)}
-            >
-              {folderTrail(db, folder.id)
-                .map((part) => part.name)
-                .join(" / ")}
-            </Button>
-          ))}
+          {suggestions.map((folder) => {
+            const selected = folderOverride === folder.id;
+            return (
+              <Button
+                key={folder.id}
+                tone={selected ? "solid" : "ghost"}
+                aria-pressed={selected}
+                onClick={() => setFolderOverride(folder.id)}
+              >
+                {selected && <Check size={14} />}
+                {folderTrail(db, folder.id)
+                  .map((part) => part.name)
+                  .join(" / ")}
+              </Button>
+            );
+          })}
         </div>
       )}
       <p className="mt-3 text-xs text-muted">
@@ -374,10 +391,10 @@ export function QuickAdd() {
           kind === "note"
             ? quick.folderId ?? inboxFolder(db)?.id ?? null
             : parsed.folderId ??
-              folderOverride ??
-              quick.folderId ??
-              inboxFolder(db)?.id ??
-              null
+                folderOverride ??
+                quick.folderId ??
+                inboxFolder(db)?.id ??
+                null
         )
           .map((part) => part.name)
           .join(" / ") || "Nezařazené"}

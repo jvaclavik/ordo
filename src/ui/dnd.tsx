@@ -80,7 +80,7 @@ type Ghost =
       x: number;
       y: number;
     }
-  | { kind: "item"; title: string };
+  | { kind: "item"; title: string; width: number };
 
 function marginBox(node: HTMLElement): BoxSpan {
   const box = node.getBoundingClientRect();
@@ -523,16 +523,16 @@ export function DragLayer({ children }: { children: ReactNode }) {
       }
       dispatch(
         before
-          ? placeOp(db, itemId, drop.folderId, drop.statusId, before)
-          : placeOp(db, itemId, drop.folderId, drop.statusId)
+          ? placeOp(db, itemId, drop.folderId, drop.statusId, before, true)
+          : placeOp(db, itemId, drop.folderId, drop.statusId, undefined, true)
       );
       return;
     }
     finishMove(
       ids,
       before
-        ? placeMany(db, ids, drop.folderId, drop.statusId, before)
-        : placeMany(db, ids, drop.folderId, drop.statusId)
+        ? placeMany(db, ids, drop.folderId, drop.statusId, before, true)
+        : placeMany(db, ids, drop.folderId, drop.statusId, undefined, true)
     );
   };
 
@@ -552,14 +552,14 @@ export function DragLayer({ children }: { children: ReactNode }) {
       const moving = ids.filter((id) => id !== target.id);
       finishMove(
         ids,
-        placeMany(db, moving, target.folderId, target.statusId, target.id)
+        placeMany(db, moving, target.folderId, target.statusId, target.id, true)
       );
       return;
     }
     if (overId.startsWith("status:")) {
       const status = byId(db.statuses, overId.slice("status:".length));
       if (!status) return;
-      finishMove(ids, placeMany(db, ids, status.folderId, status.id));
+      finishMove(ids, placeMany(db, ids, status.folderId, status.id, undefined, true));
       return;
     }
     const manyFolder = taskFolderId(overId);
@@ -596,7 +596,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
         ids.map((id) => ({
           type: "updateItem",
           id,
-          patch: { plannedFor: day, planUntil: null },
+          patch: { plannedFor: day, planUntil: null, dueAt: null, dueHasTime: false },
         }))
       );
       return;
@@ -669,14 +669,14 @@ export function DragLayer({ children }: { children: ReactNode }) {
       const target = byId(db.items, overId.slice("item:".length));
       if (!target || target.id === item.id || !target.statusId) return;
       dispatch(
-        placeOp(db, item.id, target.folderId, target.statusId, target.id)
+        placeOp(db, item.id, target.folderId, target.statusId, target.id, true)
       );
       return;
     }
     if (overId.startsWith("status:")) {
       const status = byId(db.statuses, overId.slice("status:".length));
       if (!status) return;
-      dispatch(placeOp(db, item.id, status.folderId, status.id));
+      dispatch(placeOp(db, item.id, status.folderId, status.id, undefined, true));
       return;
     }
     const oneFolder = taskFolderId(overId);
@@ -697,7 +697,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
       dispatch({
         type: "updateItem",
         id: item.id,
-        patch: { plannedFor: day, planUntil: null },
+        patch: { plannedFor: day, planUntil: null, dueAt: null, dueHasTime: false },
       });
       return;
     }
@@ -783,6 +783,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
             ? ui.picked.length
             : 0;
         let folderGrab = { x: 28, y: 18 };
+        let itemWidth = 0;
         if (data?.folderId) {
           const origin = event.activatorEvent.target;
           const row =
@@ -802,6 +803,12 @@ export function DragLayer({ children }: { children: ReactNode }) {
             `[data-task-id="${CSS.escape(data.itemId)}"]`
           );
           sourceSpanRef.current = card ? marginBox(card) : null;
+          const title = card?.querySelector<HTMLElement>("span.block");
+          const textWidth = title?.getBoundingClientRect().width ?? 0;
+          itemWidth =
+            textWidth > 0
+              ? textWidth + 26
+              : (card?.getBoundingClientRect().width ?? 0);
         } else {
           sourceSpanRef.current = null;
         }
@@ -819,6 +826,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
                 kind: "item",
                 title:
                   count > 1 ? `${count} vybraných` : item?.title ?? "Přesun",
+                width: itemWidth > 0 ? itemWidth : 296,
               }
         );
       }}
@@ -855,7 +863,9 @@ export function DragLayer({ children }: { children: ReactNode }) {
       <DragOverlay
         dropAnimation={null}
         style={
-          ghost?.kind === "item" ? { width: "max-content", height: "auto" } : {}
+          ghost?.kind === "item"
+            ? { width: ghost.width, height: "auto" }
+            : {}
         }
       >
         {ghost?.kind === "folder" && (
@@ -881,8 +891,8 @@ export function DragLayer({ children }: { children: ReactNode }) {
           </div>
         )}
         {ghost?.kind === "item" && (
-          <div className="pointer-events-none relative h-full w-full">
-            <div className="flex h-full w-full cursor-grabbing items-center rounded-md border border-line bg-panel px-3 text-sm font-medium opacity-70 shadow-[var(--shadow)]">
+          <div className="pointer-events-none relative w-full">
+            <div className="cursor-grabbing break-words whitespace-normal rounded-md border border-line bg-panel px-3 py-2.5 text-sm font-medium leading-5 opacity-70 shadow-[var(--shadow)]">
               {ghost.title}
             </div>
             {itemLabel && (

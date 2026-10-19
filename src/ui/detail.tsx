@@ -1,5 +1,6 @@
 import {
   Calendar,
+  Check,
   Clock,
   Flag,
   FolderInput,
@@ -17,15 +18,22 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { dispatch, useSnap } from "../data/store.tsx";
-import { combineDue, dueChoices, formatDay, todayKey } from "../domain/dates.ts";
-import { horizonPresets, planLabel } from "../domain/horizon.ts";
+import { combineDue, dueChoices, dueDateKey, isoWeekday, todayKey } from "../domain/dates.ts";
+import { horizonPresets, planLabel, whenLabel } from "../domain/horizon.ts";
 import { parseQuickAdd } from "../domain/quickAdd.ts";
 import { pullHashtags, removeToken } from "../domain/hashtags.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import { alive, byId, resolvedOpen, statusesOf } from "../domain/db.ts";
+import { fold } from "../domain/text.ts";
 import { newItem } from "../domain/factory.ts";
 import { priorityLabel } from "../domain/labels.ts";
-import { recurrenceLabel, weekdaysFrom, weekdaysTo } from "../domain/recurrence.ts";
+import {
+  recurrenceLabel,
+  recurrenceOf,
+  recurrencePreset,
+  weekdaysTo,
+  type Recurrence,
+} from "../domain/recurrence.ts";
 import {
   blockedItems,
   blockingItems,
@@ -95,6 +103,44 @@ function Fact({
   );
 }
 
+function WhenFields({ item }: { item: Item }) {
+  const [mode, setMode] = useState<"due" | "plan">(
+    item.plannedFor && !item.dueAt ? "plan" : "due"
+  );
+  return (
+    <div className="grid gap-2">
+      <div
+        className="flex rounded-md bg-black/5 p-0.5 dark:bg-white/10"
+        role="group"
+        aria-label="Kdy"
+      >
+        {(
+          [
+            ["due", "Přesný termín"],
+            ["plan", "Plán"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={mode === value}
+            className={cx(
+              "flex-1 rounded-sm px-2 py-1 text-xs",
+              mode === value
+                ? "bg-accent text-accent-ink"
+                : "text-muted hover:text-ink"
+            )}
+            onClick={() => setMode(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {mode === "due" ? <DueFields item={item} /> : <PlanEditor item={item} />}
+    </div>
+  );
+}
+
 function PlanEditor({ item }: { item: Item }) {
   const { db } = useSnap();
   const today = todayKey();
@@ -109,6 +155,8 @@ function PlanEditor({ item }: { item: Item }) {
       patch: {
         plannedFor: from,
         planUntil: from && until && until > from ? until : null,
+        dueAt: null,
+        dueHasTime: false,
       },
     });
   };
@@ -191,7 +239,11 @@ function DueFields({ item }: { item: Item }) {
     dispatch({
       type: "updateItem",
       id: item.id,
-      patch: combineDue(nextDay, nextTime),
+      patch: {
+        ...combineDue(nextDay, nextTime),
+        plannedFor: null,
+        planUntil: null,
+      },
     });
   return (
     <div className="grid gap-2">
@@ -281,14 +333,26 @@ export function Detail({ item }: { item: Item }) {
     setExtra(null);
   }, [item.id]);
   useLayer((event) => {
-    if (event.key !== "Escape") {
-      trapTab(event, card.current);
-      return;
-    }
     const target = event.target instanceof HTMLElement ? event.target : null;
     const typing = Boolean(
       target?.closest("input, textarea, select, [contenteditable='true']")
     );
+    if (
+      (event.key === "Delete" || event.key === "Backspace") &&
+      !event.repeat &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !typing
+    ) {
+      event.preventDefault();
+      askDeleteItems([item], ui.askConfirm, () => ui.setSelected(null));
+      return;
+    }
+    if (event.key !== "Escape") {
+      trapTab(event, card.current);
+      return;
+    }
     event.preventDefault();
     if (typing) {
       target?.blur();
@@ -300,17 +364,10 @@ export function Detail({ item }: { item: Item }) {
     }
     ui.setSelected(null);
   });
-  const people = alive(db.people);
   const allTags = alive(db.tags);
   const today = todayKey();
-  const day = item.dueAt?.slice(0, 10) ?? "";
-  const time = item.dueHasTime ? item.dueAt?.slice(11, 16) ?? "" : "";
-  const dueLabel = item.dueAt
-    ? `${formatDay(day, today)}${time ? ` ${time}` : ""}`
-    : null;
-  const planText = item.plannedFor
-    ? planLabel(item.plannedFor, item.planUntil, today)
-    : null;
+  const when = whenLabel(item, today);
+  const late = Boolean(item.dueAt && item.dueAt.slice(0, 10) < today);
   const repeat = recurrenceLabel(item);
   const person = byId(db.people, item.assigneeId);
   const toggle = (key: string) =>
@@ -337,7 +394,7 @@ export function Detail({ item }: { item: Item }) {
   const task = item.type === "task";
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-ink/40">
+    <div className="fixed inset-0 z-40 overflow-y-auto bg-ink/15">
       <div
         className="flex min-h-full items-start justify-center px-3 py-6 sm:px-8 sm:py-12"
         onMouseDown={(event) => {
@@ -391,7 +448,8 @@ export function Detail({ item }: { item: Item }) {
               <div className="flex flex-wrap items-center gap-1.5">
                 {folder && task && (
                   <select
-                    className="rounded bg-ink/[0.06] px-2 py-0.5 text-sm outline-none hover:bg-ink/10"
+                    className="rounded bg-ink/[0.06] px-2 py-0.5 text-sm font-medium outline-none hover:bg-ink/10"
+                    data-meaning={byId(db.statuses, item.statusId)?.meaning}
                     aria-label="Stav"
                     value={item.statusId ?? ""}
                     onChange={(event) =>
@@ -405,9 +463,10 @@ export function Detail({ item }: { item: Item }) {
                     ))}
                   </select>
                 )}
-                {dueLabel && <Fact onClick={() => toggle("due")}>{dueLabel}</Fact>}
-                {planText && (
-                  <Fact onClick={() => toggle("plan")}>plán {planText}</Fact>
+                {when && (
+                  <Fact onClick={() => toggle("when")} {...(late ? { tone: "danger" as const } : {})}>
+                    {when}
+                  </Fact>
                 )}
                 {repeat && <Fact onClick={() => toggle("repeat")}>{repeat}</Fact>}
                 {item.priority && (
@@ -425,31 +484,12 @@ export function Detail({ item }: { item: Item }) {
               </div>
               {extra && (
                 <div className="grid gap-2">
-                  {extra === "due" && <DueFields item={item} />}
-                  {extra === "plan" && <PlanEditor item={item} />}
-                  {extra === "repeat" && <RecurrenceEditor item={item} />}
-                  {extra === "priority" && <PriorityFields item={item} />}
-                  {extra === "person" && (
-                    <select
-                      className={control}
-                      aria-label="Člověk"
-                      value={item.assigneeId ?? ""}
-                      onChange={(event) =>
-                        dispatch({
-                          type: "updateItem",
-                          id: item.id,
-                          patch: { assigneeId: event.target.value || null },
-                        })
-                      }
-                    >
-                      <option value="">Nikdo</option>
-                      {people.map((entry) => (
-                        <option key={entry.id} value={entry.id}>
-                          {entry.name}
-                        </option>
-                      ))}
-                    </select>
+                  {extra === "when" && <WhenFields item={item} />}
+                  {extra === "repeat" && (
+                    <RecurrenceEditor item={item} onDone={() => setExtra(null)} />
                   )}
+                  {extra === "priority" && <PriorityFields item={item} />}
+                  {extra === "person" && <PersonAssign item={item} />}
                   {extra === "tag" && (
                     <TagAdder item={item} names={allTags.map((tag) => tag.name)} />
                   )}
@@ -510,16 +550,10 @@ export function Detail({ item }: { item: Item }) {
                 {task && (
                   <>
                     <ActionButton
-                      pressed={extra === "due"}
-                      onClick={() => toggle("due")}
+                      pressed={extra === "when"}
+                      onClick={() => toggle("when")}
                     >
-                      <Clock size={15} /> Termín
-                    </ActionButton>
-                    <ActionButton
-                      pressed={extra === "plan"}
-                      onClick={() => toggle("plan")}
-                    >
-                      <Calendar size={15} /> Plán
+                      <Calendar size={15} /> Kdy
                     </ActionButton>
                     <ActionButton
                       pressed={extra === "repeat"}
@@ -969,6 +1003,84 @@ function TaskEmbed({ id }: { id: string }) {
   );
 }
 
+function PersonAssign({ item }: { item: Item }) {
+  const { db } = useSnap();
+  const [name, setName] = useState("");
+  const people = alive(db.people);
+  const assign = (assigneeId: string | null) =>
+    dispatch({
+      type: "updateItem",
+      id: item.id,
+      patch: { assigneeId },
+    });
+  const add = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const existing = people.find(
+      (person) => fold(person.name) === fold(trimmed)
+    );
+    if (existing) {
+      assign(existing.id);
+      setName("");
+      return;
+    }
+    const id = nanoid(10);
+    dispatch({
+      type: "batch",
+      ops: [
+        {
+          type: "createPerson",
+          id,
+          name: trimmed,
+          color: null,
+          emoji: null,
+        },
+        {
+          type: "updateItem",
+          id: item.id,
+          patch: { assigneeId: id },
+        },
+      ],
+    });
+    setName("");
+  };
+  return (
+    <div className="grid gap-2">
+      <select
+        className={control}
+        aria-label="Člověk"
+        value={item.assigneeId ?? ""}
+        onChange={(event) => assign(event.target.value || null)}
+      >
+        <option value="">Nikdo</option>
+        {people.map((entry) => (
+          <option key={entry.id} value={entry.id}>
+            {entry.name}
+          </option>
+        ))}
+      </select>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          add();
+        }}
+      >
+        <input
+          className={control}
+          aria-label="Nový člověk"
+          placeholder="Nový člověk"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        <Button tone="soft" type="submit">
+          Přidat
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 function TagAdder({ item, names }: { item: Item; names: string[] }) {
   const { db } = useSnap();
   const [value, setValue] = useState("");
@@ -1022,90 +1134,213 @@ function TagAdder({ item, names }: { item: Item; names: string[] }) {
   );
 }
 
-function RecurrenceEditor({ item }: { item: Item }) {
-  const days = weekdaysFrom(item.recurrenceWeekdays);
-  const set = (freq: RecurrenceFreq | null, weekdays = days) => {
+const REPEAT_PRESETS = [
+  ["never", "Nikdy"],
+  ["daily", "Každý den"],
+  ["weekly", "Každý týden"],
+  ["monthly", "Každý měsíc"],
+  ["yearly", "Každý rok"],
+] as const;
+
+type CustomFreq = "daily" | "weekly" | "monthly" | "yearly";
+
+function anchorDay(item: Item): string {
+  return dueDateKey(item.dueAt) ?? item.plannedFor ?? todayKey();
+}
+
+function everyPhrase(freq: CustomFreq, count: number): { lead: string; unit: string } {
+  const few = count >= 2 && count <= 4;
+  if (freq === "daily")
+    return { lead: count === 1 ? "Každý" : "Každých", unit: count === 1 ? "den" : few ? "dny" : "dní" };
+  if (freq === "weekly")
+    return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "týden" : few ? "týdny" : "týdnů" };
+  if (freq === "monthly")
+    return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "měsíc" : few ? "měsíce" : "měsíců" };
+  return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "rok" : few ? "roky" : "let" };
+}
+
+function customDraft(rule: Recurrence | null, anchor: string) {
+  const weekday = isoWeekday(anchor);
+  if (!rule || rule.freq === "interval") {
+    return {
+      freq: (rule?.freq === "interval" ? "daily" : "weekly") as CustomFreq,
+      interval: rule?.interval ?? 1,
+      weekdays: rule?.weekdays.length ? rule.weekdays : [weekday],
+      until: rule?.until ?? null,
+    };
+  }
+  const freq: CustomFreq =
+    rule.freq === "daily" || rule.freq === "monthly" || rule.freq === "yearly" ? rule.freq : "weekly";
+  return {
+    freq,
+    interval: rule.interval,
+    weekdays: rule.weekdays.length > 0 ? rule.weekdays : [weekday],
+    until: rule.until,
+  };
+}
+
+function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) {
+  const anchor = anchorDay(item);
+  const rule = recurrenceOf(item);
+  const preset = recurrencePreset(rule, anchor);
+  const [custom, setCustom] = useState(false);
+  const [draft, setDraft] = useState(() => customDraft(rule, anchor));
+  const save = (freq: RecurrenceFreq | null, interval = 1, weekdays: number[] | null = null, until: string | null = null) => {
     dispatch({
       type: "setRecurrence",
       itemId: item.id,
       freq,
-      interval: item.recurrenceInterval ?? 1,
-      weekdays: weekdaysTo(weekdays),
-      until: item.recurrenceUntil,
+      interval,
+      weekdays: weekdaysTo(weekdays ?? []),
+      until,
     });
+    onDone();
   };
-  return (
-    <div className="grid gap-2">
-      <select
-        className={control}
-        aria-label="Opakování"
-        value={item.recurrenceFreq ?? ""}
-        onChange={(event) =>
-          set((event.target.value || null) as RecurrenceFreq | null)
-        }
-      >
-        <option value="">Neopakovat</option>
-        <option value="daily">Každý den</option>
-        <option value="weekly">Vybrané dny</option>
-        <option value="monthly">Každý měsíc</option>
-        <option value="interval">Každých N dní</option>
-      </select>
-      {item.recurrenceFreq === "interval" && (
-        <input
-          className={control}
-          aria-label="Počet dní"
-          type="number"
-          min={1}
-          value={item.recurrenceInterval ?? 1}
-          onChange={(event) =>
-            dispatch({
-              type: "setRecurrence",
-              itemId: item.id,
-              freq: "interval",
-              interval: Number(event.target.value) || 1,
-              weekdays: item.recurrenceWeekdays,
-              until: item.recurrenceUntil,
-            })
-          }
-        />
-      )}
-      {item.recurrenceFreq === "weekly" && (
-        <div className="flex flex-wrap gap-1">
-          {WEEK.map(([day, label]) => {
-            const on = days.includes(day);
-            return (
-              <Button
-                key={day}
-                tone={on ? "soft" : "ghost"}
-                onClick={() =>
-                  set(
-                    "weekly",
-                    on ? days.filter((value) => value !== day) : [...days, day]
-                  )
-                }
-              >
-                {label}
-              </Button>
-            );
-          })}
+  const choose = (next: (typeof REPEAT_PRESETS)[number][0]) => {
+    if (next === "never") {
+      save(null);
+      return;
+    }
+    if (next === "weekly") {
+      save("weekly", 1, [isoWeekday(anchor)]);
+      return;
+    }
+    save(next, 1);
+  };
+  if (custom) {
+    const count = Math.max(1, draft.interval || 1);
+    const phrase = everyPhrase(draft.freq, count);
+    return (
+      <div className="grid gap-3 rounded-lg border border-line p-3">
+        <label className="flex items-center justify-between gap-3 text-sm">
+          Frekvence
+          <select
+            className={`${control} w-36`}
+            aria-label="Frekvence"
+            value={draft.freq}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, freq: event.target.value as CustomFreq }))
+            }
+          >
+            <option value="daily">Denně</option>
+            <option value="weekly">Týdně</option>
+            <option value="monthly">Měsíčně</option>
+            <option value="yearly">Ročně</option>
+          </select>
+        </label>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span>{phrase.lead}</span>
+          <input
+            className={`${control} w-16 text-center`}
+            aria-label="Interval"
+            type="number"
+            min={1}
+            value={draft.interval}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                interval: Math.max(1, Number(event.target.value) || 1),
+              }))
+            }
+          />
+          <span>
+            {phrase.unit}
+            {draft.freq === "weekly" ? " ve dnech" : ""}
+          </span>
         </div>
-      )}
-      <input
-        className={control}
-        type="date"
-        aria-label="Opakovat do"
-        value={item.recurrenceUntil ?? ""}
-        onChange={(event) =>
-          dispatch({
-            type: "setRecurrence",
-            itemId: item.id,
-            freq: item.recurrenceFreq,
-            interval: item.recurrenceInterval,
-            weekdays: item.recurrenceWeekdays,
-            until: event.target.value || null,
-          })
-        }
-      />
+        {draft.freq === "weekly" && (
+          <div className="grid grid-cols-7 gap-1">
+            {WEEK.map(([day, label]) => {
+              const on = draft.weekdays.includes(day);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  aria-pressed={on}
+                  className={cx(
+                    "rounded-md py-1.5 text-xs font-medium",
+                    on
+                      ? "bg-accent text-accent-ink"
+                      : "bg-black/[0.04] text-muted hover:text-ink dark:bg-white/[0.06]"
+                  )}
+                  onClick={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      weekdays: on
+                        ? current.weekdays.filter((value) => value !== day)
+                        : [...current.weekdays, day],
+                    }))
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <label className="flex items-center justify-between gap-3 text-sm">
+          Konec
+          <input
+            className={`${control} w-40`}
+            type="date"
+            aria-label="Konec opakování"
+            value={draft.until ?? ""}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, until: event.target.value || null }))
+            }
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button onClick={() => setCustom(false)}>Zrušit</Button>
+          <Button
+            tone="solid"
+            onClick={() =>
+              save(
+                draft.freq,
+                count,
+                draft.freq === "weekly"
+                  ? draft.weekdays.length > 0
+                    ? draft.weekdays
+                    : [isoWeekday(anchor)]
+                  : null,
+                draft.until
+              )
+            }
+          >
+            Hotovo
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div role="radiogroup" aria-label="Opakování" className="overflow-hidden rounded-lg border border-line">
+      {REPEAT_PRESETS.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          role="radio"
+          aria-checked={preset === id}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          onClick={() => choose(id)}
+        >
+          <Check size={15} className={cx("shrink-0", preset === id ? "opacity-100" : "opacity-0")} />
+          {label}
+        </button>
+      ))}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={preset === "custom"}
+        className="flex w-full items-center gap-2 border-t border-line px-3 py-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
+        onClick={() => {
+          setDraft(customDraft(rule, anchor));
+          setCustom(true);
+        }}
+      >
+        <Check size={15} className={cx("shrink-0", preset === "custom" ? "opacity-100" : "opacity-0")} />
+        Vlastní…
+      </button>
     </div>
   );
 }

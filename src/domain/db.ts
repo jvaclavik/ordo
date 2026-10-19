@@ -151,6 +151,7 @@ export function bootstrap(ctx: Ctx): Db {
         sortOrder: first,
         system: "inbox",
         defaultView: "list",
+        itemSort: null,
         openStatusId: null,
         closedStatusId: null,
         isArchived: false,
@@ -177,6 +178,10 @@ function omitKeys<T extends object>(value: T, keys: readonly string[]): T {
 export function withPlan(db: Db): Db {
   return {
     ...omitKeys(db, ["shoppingTemplates"]),
+    folders: db.folders.map((folder) => ({
+      ...folder,
+      itemSort: folder.itemSort === "priority" || folder.itemSort === "created" ? folder.itemSort : null,
+    })),
     items: db.items.map((item) =>
       omitKeys(
         { ...item, planUntil: item.planUntil ?? null },

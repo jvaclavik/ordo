@@ -2,7 +2,8 @@ export type StatusMeaning = "todo" | "doing" | "done" | "cancelled" | "none";
 export type ItemType = "task" | "note";
 export type Priority = "low" | "high" | "urgent";
 export type ViewMode = "list" | "board" | "notes" | "calendar";
-export type RecurrenceFreq = "daily" | "weekly" | "monthly" | "interval";
+export type ItemSort = "priority" | "created";
+export type RecurrenceFreq = "daily" | "weekly" | "monthly" | "yearly" | "interval";
 export type LinkKind = "related" | "taskFromNote";
 export type FolderColor =
   | "c1"
@@ -100,6 +101,7 @@ export type Folder = {
   sortOrder: string;
   system: "inbox" | null;
   defaultView: ViewMode;
+  itemSort: ItemSort | null;
   openStatusId: string | null;
   closedStatusId: string | null;
   isArchived: boolean;
@@ -267,6 +269,7 @@ export type FolderPatch = {
   color?: FolderPaint | null;
   keywords?: string | null;
   defaultView?: ViewMode;
+  itemSort?: ItemSort | null;
   openStatusId?: string | null;
   closedStatusId?: string | null;
   isArchived?: boolean;

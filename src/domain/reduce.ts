@@ -18,6 +18,7 @@ import {
   wouldFolderCycle,
 } from "./db.ts";
 import { normalizeFolderColor } from "./color.ts";
+import { applyItemSort, clearItemSort, sortKeyFor } from "./itemSort.ts";
 import { keyAtEnd } from "./ordering.ts";
 import type { Op } from "./op.ts";
 import { nextOccurrence, recurrenceOf, weekdaysTo } from "./recurrence.ts";
@@ -150,6 +151,7 @@ function createFolder(db: Db, op: Extract<Op, { type: "createFolder" }>, ctx: Ct
     sortOrder,
     system: null,
     defaultView: "list" as const,
+    itemSort: null,
     openStatusId: null,
     closedStatusId: null,
     isArchived: false,
@@ -167,7 +169,7 @@ function updateFolder(db: Db, id: string, patch: FolderPatch, ctx: Ctx): Db {
   if (!folder || folder.isDeleted) return db;
   const name = patch.name !== undefined ? patch.name.trim().slice(0, 200) : folder.name;
   if (!name) return db;
-  return {
+  const next: Db = {
     ...db,
     folders: db.folders.map((row) =>
       row.id === id
@@ -178,6 +180,7 @@ function updateFolder(db: Db, id: string, patch: FolderPatch, ctx: Ctx): Db {
             color: patch.color !== undefined ? normalizeFolderColor(patch.color) : row.color,
             keywords: patch.keywords !== undefined ? patch.keywords : row.keywords,
             defaultView: patch.defaultView !== undefined ? patch.defaultView : row.defaultView,
+            itemSort: patch.itemSort !== undefined ? patch.itemSort : row.itemSort,
             openStatusId: patch.openStatusId !== undefined ? patch.openStatusId : row.openStatusId,
             closedStatusId: patch.closedStatusId !== undefined ? patch.closedStatusId : row.closedStatusId,
             isArchived: patch.isArchived !== undefined ? patch.isArchived : row.isArchived,
@@ -186,6 +189,8 @@ function updateFolder(db: Db, id: string, patch: FolderPatch, ctx: Ctx): Db {
         : row,
     ),
   };
+  if (patch.itemSort === "priority" || patch.itemSort === "created") return applyItemSort(next, id, patch.itemSort, ctx.now);
+  return next;
 }
 
 function moveFolder(db: Db, op: Extract<Op, { type: "moveFolder" }>, ctx: Ctx): Db {
@@ -320,7 +325,11 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
     }
   }
   if (!statusId || byId(db.statuses, statusId)?.folderId !== folder.id) statusId = resolvedOpen(db, folder)?.id ?? null;
-  const sortOrder = input.sortOrder || sortKeyForStatus(db, folder.id, statusId);
+  const slotted =
+    input.type === "task" && !input.sortOrder && folder.itemSort
+      ? sortKeyFor(db, folder.id, statusId, { priority: input.priority, createdAt: ctx.now }, folder.itemSort)
+      : null;
+  const sortOrder = slotted ?? (input.sortOrder || sortKeyForStatus(db, folder.id, statusId));
   const item: Item = {
     id: input.id,
     workspaceId: folder.workspaceId,
@@ -376,6 +385,22 @@ function applyRuleTarget(db: Db, rule: Rule, currentStatus: string | null): { fo
   return { folder, statusId };
 }
 
+function exclusiveWhen(row: Item, patch: ItemPatch) {
+  let dueAt = patch.dueAt !== undefined ? patch.dueAt : row.dueAt;
+  let dueHasTime = patch.dueHasTime !== undefined ? patch.dueHasTime : row.dueHasTime;
+  let plannedFor = patch.plannedFor !== undefined ? patch.plannedFor : row.plannedFor;
+  let planUntil = patch.planUntil !== undefined ? patch.planUntil : row.planUntil ?? null;
+  if (patch.dueAt && patch.plannedFor === undefined) {
+    plannedFor = null;
+    planUntil = null;
+  }
+  if (patch.plannedFor && patch.dueAt === undefined) {
+    dueAt = null;
+    dueHasTime = false;
+  }
+  return { dueAt, dueHasTime, plannedFor, planUntil };
+}
+
 function updateItem(db: Db, id: string, patch: ItemPatch, ctx: Ctx, fileInbox = false): Db {
   const item = byId(db.items, id);
   if (!item || item.isDeleted) return db;
@@ -391,10 +416,7 @@ function updateItem(db: Db, id: string, patch: ItemPatch, ctx: Ctx, fileInbox = 
         type: patch.type !== undefined ? patch.type : row.type,
         priority: patch.priority !== undefined ? patch.priority : row.priority,
         assigneeId: patch.assigneeId !== undefined ? patch.assigneeId : row.assigneeId,
-        dueAt: patch.dueAt !== undefined ? patch.dueAt : row.dueAt,
-        dueHasTime: patch.dueHasTime !== undefined ? patch.dueHasTime : row.dueHasTime,
-        plannedFor: patch.plannedFor !== undefined ? patch.plannedFor : row.plannedFor,
-        planUntil: patch.planUntil !== undefined ? patch.planUntil : row.planUntil ?? null,
+        ...exclusiveWhen(row, patch),
         parentItemId: patch.parentItemId !== undefined ? patch.parentItemId : row.parentItemId,
         sortOrder: patch.sortOrder ? patch.sortOrder : row.sortOrder,
         pinX: patch.pinX !== undefined ? patch.pinX : (row.pinX ?? null),
@@ -407,7 +429,24 @@ function updateItem(db: Db, id: string, patch: ItemPatch, ctx: Ctx, fileInbox = 
         pristine: false,
         updatedAt: ctx.now,
       }));
-  return fileInbox ? fileInboxItem(next, id, ctx) : next;
+  const home = byId(next.folders, item.folderId);
+  let placed = next;
+  if (patch.sortOrder && home?.itemSort) {
+    placed = clearItemSort(next, item.folderId, ctx.now);
+  } else if (
+    patch.priority !== undefined &&
+    patch.priority !== item.priority &&
+    !patch.sortOrder &&
+    home?.itemSort === "priority" &&
+    item.type === "task"
+  ) {
+    const updated = byId(next.items, id);
+    if (updated) {
+      const sortOrder = sortKeyFor(next, updated.folderId, updated.statusId, updated, "priority");
+      if (sortOrder !== updated.sortOrder) placed = mapItem(next, id, (row) => ({ ...row, sortOrder }));
+    }
+  }
+  return fileInbox ? fileInboxItem(placed, id, ctx) : placed;
 }
 
 function wouldParentCycle(db: Db, itemId: string, parentId: string | null): boolean {
@@ -429,16 +468,31 @@ function placeItem(db: Db, op: Extract<Op, { type: "placeItem" }>, ctx: Ctx): Db
   if (status.folderId !== folder.id) return db;
   const wasDone = isDoneStatus(db, item.statusId);
   const nowDone = status.meaning === "done";
+  const slotted =
+    !op.manual && item.type === "task" && folder.itemSort
+      ? sortKeyFor(
+          db,
+          folder.id,
+          status.id,
+          { id: item.id, priority: item.priority, createdAt: item.createdAt },
+          folder.itemSort,
+        )
+      : op.sortOrder;
+  const sourceId = item.folderId;
   db = mapItem(db, item.id, (row) => ({
     ...row,
     folderId: folder.id,
     statusId: status.id,
-    sortOrder: op.sortOrder,
+    sortOrder: slotted,
     pristine: false,
     updatedAt: ctx.now,
   }));
   if (!wasDone && nowDone && item.recurrenceFreq && item.type === "task") db = spawnFrom(db, item.id, ctx);
   if (wasDone && !nowDone) db = retractSpawn(db, item.id, ctx);
+  if (op.manual) {
+    if (sourceId !== folder.id) db = clearItemSort(db, sourceId, ctx.now);
+    db = clearItemSort(db, folder.id, ctx.now);
+  }
   return db;
 }
 
@@ -467,15 +521,24 @@ function spawnFrom(db: Db, sourceId: string, ctx: Ctx): Db {
     id,
     seriesId,
     statusId: open?.id ?? null,
-    plannedFor: day,
+    plannedFor: source.dueAt ? null : day,
     planUntil: null,
     dueAt: source.dueAt ? shiftDue(source, day) : null,
+    dueHasTime: source.dueAt ? source.dueHasTime : false,
     parentItemId: null,
     pristine: true,
     isPinned: false,
     isArchived: false,
     isDeleted: false,
-    sortOrder: sortKeyForStatus(db, folder.id, open?.id ?? null),
+    sortOrder: folder.itemSort
+      ? sortKeyFor(
+          db,
+          folder.id,
+          open?.id ?? null,
+          { priority: source.priority, createdAt: ctx.now },
+          folder.itemSort,
+        )
+      : sortKeyForStatus(db, folder.id, open?.id ?? null),
     recurrenceFreq: rule.freq,
     recurrenceInterval: rule.interval,
     recurrenceWeekdays: weekdaysTo(rule.weekdays),
@@ -795,7 +858,10 @@ function fileInboxItem(db: Db, itemId: string, ctx: Ctx): Db {
   if (!rule) return db;
   const applied = applyRuleTarget(db, rule, item.statusId);
   if (!applied) return db;
-  const sortOrder = sortKeyForStatus(db, applied.folder.id, applied.statusId);
+  const sortOrder =
+    item.type === "task" && applied.folder.itemSort
+      ? sortKeyFor(db, applied.folder.id, applied.statusId, item, applied.folder.itemSort)
+      : sortKeyForStatus(db, applied.folder.id, applied.statusId);
   db = mapItem(db, item.id, (row) => ({
     ...row,
     folderId: applied.folder.id,

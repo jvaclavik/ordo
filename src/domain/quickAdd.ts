@@ -378,11 +378,10 @@ export function opsFromQuickAdd(
     byId(db.statuses, options.statusId)?.folderId === folder.id
       ? options.statusId
       : resolvedOpen(db, folder)?.id ?? null;
-  const dueAt =
-    options.dateRole === "due" ? combine(parsed.dueDay, parsed.dueTime) : null;
-  const pinned = options.dateRole === "plan" ? parsed.dueDay : null;
-  const plannedFor = pinned ?? parsed.planFrom;
-  const planUntil = pinned ? null : parsed.planUntil;
+  const horizon = Boolean(parsed.planFrom);
+  const dueAt = horizon ? null : combine(parsed.dueDay, parsed.dueTime);
+  const plannedFor = horizon ? parsed.planFrom : null;
+  const planUntil = horizon ? parsed.planUntil : null;
   ops.push({
     type: "createItem",
     item: newItem({
@@ -394,7 +393,7 @@ export function opsFromQuickAdd(
       priority: parsed.priority,
       assigneeId,
       dueAt,
-      dueHasTime: Boolean(parsed.dueTime) && options.dateRole === "due",
+      dueHasTime: !horizon && Boolean(parsed.dueTime),
       plannedFor,
       planUntil,
       applyRules: options.applyRules,
@@ -410,6 +409,39 @@ export function taskLines(text: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+export function opsFromTaskDraft(
+  db: Db,
+  text: string,
+  options: {
+    folderId: string;
+    statusId: string | null;
+    dateRole: DateRole;
+    applyRules: boolean;
+    ids: () => string;
+    today: string;
+  }
+): { ops: Op[]; itemIds: string[] } {
+  const parsed = parseQuickAdd(text, db, options.today);
+  if (
+    !parsed.title.trim() ||
+    (parsed.title === "Bez názvu" && parsed.chips.length === 0 && !parsed.body)
+  )
+    return { ops: [], itemIds: [] };
+  const itemId = options.ids();
+  const folderId = parsed.folderId ?? options.folderId;
+  const ops = opsFromQuickAdd(db, parsed, {
+    folderId,
+    statusId: folderId === options.folderId ? options.statusId : null,
+    dateRole: options.dateRole,
+    applyRules: options.applyRules,
+    itemId,
+    ids: options.ids,
+  });
+  if (!ops.some((op) => op.type === "createItem"))
+    return { ops: [], itemIds: [] };
+  return { ops, itemIds: [itemId] };
 }
 
 export function opsFromTaskLines(

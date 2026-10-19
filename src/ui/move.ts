@@ -5,16 +5,23 @@ import type { Op } from "../domain/op.ts";
 import { openSubtasks } from "../domain/select.ts";
 import type { Db, Item, Status } from "../domain/types.ts";
 
-export function placeOp(db: Db, itemId: string, folderId: string, statusId: string, beforeId?: string): Op {
+export function placeOp(db: Db, itemId: string, folderId: string, statusId: string, beforeId?: string, manual = false): Op {
   const siblings = alive(db.items)
     .filter((item) => item.folderId === folderId && item.statusId === statusId && item.id !== itemId)
     .sort((a, b) => (a.sortOrder < b.sortOrder ? -1 : 1));
   const found = beforeId ? siblings.findIndex((item) => item.id === beforeId) : siblings.length;
   const index = found < 0 ? siblings.length : found;
-  return { type: "placeItem", id: itemId, folderId, statusId, sortOrder: keyAtIndex(siblings.map((item) => item.sortOrder), index) };
+  const op: Op = {
+    type: "placeItem",
+    id: itemId,
+    folderId,
+    statusId,
+    sortOrder: keyAtIndex(siblings.map((item) => item.sortOrder), index),
+  };
+  return manual ? { ...op, manual: true } : op;
 }
 
-export function placeMany(db: Db, ids: string[], folderId: string, statusId: string, beforeId?: string): Op[] {
+export function placeMany(db: Db, ids: string[], folderId: string, statusId: string, beforeId?: string, manual = false): Op[] {
   const moving = new Set(ids);
   const siblings = alive(db.items)
     .filter((item) => item.folderId === folderId && item.statusId === statusId && !moving.has(item.id))
@@ -34,7 +41,8 @@ export function placeMany(db: Db, ids: string[], folderId: string, statusId: str
   return ordered.map((item) => {
     const sortOrder = generateKeyBetween(prev, next);
     prev = sortOrder;
-    return { type: "placeItem", id: item.id, folderId, statusId, sortOrder };
+    const op: Op = { type: "placeItem", id: item.id, folderId, statusId, sortOrder };
+    return manual ? { ...op, manual: true } : op;
   });
 }
 
