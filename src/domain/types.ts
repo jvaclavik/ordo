@@ -144,6 +144,7 @@ export type Item = {
   recurrenceUntil: string | null;
   pristine: boolean;
   sortOrder: string;
+  dayOrder: string | null;
   pinX: number | null;
   pinY: number | null;
   pinZ: number | null;
@@ -287,6 +288,7 @@ export type ItemPatch = {
   planUntil?: string | null;
   parentItemId?: string | null;
   sortOrder?: string;
+  dayOrder?: string | null;
   pinX?: number | null;
   pinY?: number | null;
   pinZ?: number | null;

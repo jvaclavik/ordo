@@ -1,5 +1,5 @@
 import { generateKeyBetween } from "fractional-indexing";
-import { alive, byId, resolvedClosed, statusesOf } from "../domain/db.ts";
+import { alive, byId, resolvedClosed, resolvedOpen, statusesOf } from "../domain/db.ts";
 import { keyAtIndex } from "../domain/ordering.ts";
 import type { Op } from "../domain/op.ts";
 import { openSubtasks } from "../domain/select.ts";
@@ -44,6 +44,13 @@ export function placeMany(db: Db, ids: string[], folderId: string, statusId: str
     const op: Op = { type: "placeItem", id: item.id, folderId, statusId, sortOrder };
     return manual ? { ...op, manual: true } : op;
   });
+}
+
+export function placeCreated(db: Db, ids: string[], folderId: string): Op[] {
+  const folder = byId(db.folders, folderId);
+  const statusId = folder ? resolvedOpen(db, folder)?.id : undefined;
+  if (!folder || !statusId) return [];
+  return placeMany(db, ids, folder.id, statusId);
 }
 
 export function statusForMeaning(db: Db, folderId: string, meaning: Status["meaning"]): Status[] {

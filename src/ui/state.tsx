@@ -28,7 +28,12 @@ export type ChoiceState = {
   options: { id: string; label: string }[];
   onPick: (id: string) => void;
 };
-export type Toast = { id: string; text: string; undo: boolean };
+export type Toast = {
+  id: string;
+  text: string;
+  undo: boolean;
+  action?: string;
+};
 
 type Ui = {
   selectedId: string | null;
@@ -58,7 +63,7 @@ type Ui = {
   editingBodyId: string | null;
   editBody: (id: string | null) => void;
   toasts: Toast[];
-  pushToast: (text: string, undo?: boolean) => void;
+  pushToast: (text: string, undo?: boolean, action?: string) => void;
 };
 
 const Context = createContext<Ui | null>(null);
@@ -77,9 +82,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [editingBodyId, setEditingBodyId] = useState<string | null>(null);
 
   const api = useMemo<Ui>(() => {
-    const pushToast = (text: string, undo = false) => {
+    const pushToast = (text: string, undo = false, action?: string) => {
       const id = nanoid(6);
-      setToasts((current) => [...current, { id, text, undo }]);
+      const toast: Toast = action
+        ? { id, text, undo, action }
+        : { id, text, undo };
+      setToasts((current) => [...current, toast]);
       window.setTimeout(
         () =>
           setToasts((current) => current.filter((toast) => toast.id !== id)),

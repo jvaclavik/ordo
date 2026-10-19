@@ -50,7 +50,7 @@ import { FolderPicker } from "./folderPick.tsx";
 import { downloadIcs, googleCalendarUrl } from "../lib/ics.ts";
 import { placeOp } from "./move.ts";
 import { useUi } from "./state.tsx";
-import { askDeleteItems } from "./tasks.tsx";
+import { deleteItems } from "./tasks.tsx";
 import { dispatchTaskText, TagMenu, useTagHint } from "./tagHint.tsx";
 import { MarkdownLink } from "./links.tsx";
 import {
@@ -346,7 +346,7 @@ export function Detail({ item }: { item: Item }) {
       !typing
     ) {
       event.preventDefault();
-      askDeleteItems([item], ui.askConfirm, () => ui.setSelected(null));
+      deleteItems([item], ui.pushToast, () => ui.setSelected(null));
       return;
     }
     if (event.key !== "Escape") {
@@ -619,7 +619,7 @@ export function Detail({ item }: { item: Item }) {
                 <ActionButton
                   tone="danger"
                   onClick={() =>
-                    askDeleteItems([item], ui.askConfirm, () => ui.setSelected(null))
+                    deleteItems([item], ui.pushToast, () => ui.setSelected(null))
                   }
                 >
                   <Trash2 size={15} /> Smazat

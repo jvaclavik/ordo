@@ -256,10 +256,37 @@ select[class] {
 
 .board-row {
   display: flex;
+  align-items: flex-start;
   gap: 0.75rem;
   overflow-x: auto;
-  padding-bottom: 0.5rem;
-  scroll-snap-type: x mandatory;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 1rem;
+}
+
+@media (max-width: 1023px) {
+  main:has(.board-fill) {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+    padding-bottom: 4.25rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .board-row {
+    scroll-padding-inline: 2rem;
+  }
+
+  main:has(.board-fill) {
+    padding-bottom: 0;
+  }
+
+  main:not(:has(.board-fill)) {
+    padding-bottom: 3rem;
+  }
 }
 
 .board-col {

@@ -683,6 +683,80 @@ describe("pravidla a vazby", () => {
   });
 });
 
+describe("koš", () => {
+  it("smaže z koše jen tu jednu položku", () => {
+    const base = ctx();
+    let db = freshDb(base);
+    const inbox = db.folders[0]!;
+    db = run(
+      db,
+      [
+        {
+          type: "createItem",
+          item: newItem({ id: "a", folderId: inbox.id, title: "A" }),
+        },
+        {
+          type: "createItem",
+          item: newItem({ id: "b", folderId: inbox.id, title: "B" }),
+        },
+        { type: "addDependency", id: "d1", itemId: "a", dependsOnId: "b" },
+        { type: "deleteItem", id: "a" },
+      ],
+      base
+    );
+    db = reduce(db, { type: "purgeItem", id: "b" }, base);
+    expect(byId(db.items, "b")).toBeDefined();
+    db = reduce(db, { type: "purgeItem", id: "a" }, base);
+    expect(byId(db.items, "a")).toBeNull();
+    expect(byId(db.items, "b")).toBeDefined();
+    expect(
+      db.dependencies.some(
+        (row) => row.itemId === "a" || row.dependsOnId === "a"
+      )
+    ).toBe(false);
+  });
+
+  it("smaže z koše jen tu jednu složku", () => {
+    const base = ctx();
+    let db = freshDb(base);
+    db = run(
+      db,
+      [
+        {
+          type: "createFolder",
+          id: "rodic",
+          parentId: null,
+          name: "Rodič",
+          icon: null,
+          color: null,
+          statusIds: { todo: "rt", doing: "rd", done: "rh" },
+        },
+        {
+          type: "createFolder",
+          id: "dite",
+          parentId: "rodic",
+          name: "Dítě",
+          icon: null,
+          color: null,
+          statusIds: { todo: "dt", doing: "dd", done: "dh" },
+        },
+        { type: "deleteFolder", id: "rodic" },
+      ],
+      base
+    );
+    const inbox = db.folders.find((folder) => folder.system === "inbox")!;
+    db = reduce(db, { type: "purgeFolder", id: inbox.id }, base);
+    expect(byId(db.folders, inbox.id)).toBeDefined();
+    db = reduce(db, { type: "purgeFolder", id: "rodic" }, base);
+    expect(byId(db.folders, "rodic")).toBeNull();
+    expect(byId(db.folders, "dite")?.parentId).toBeNull();
+    expect(db.statuses.some((status) => status.folderId === "rodic")).toBe(
+      false
+    );
+    expect(db.statuses.some((status) => status.folderId === "dite")).toBe(true);
+  });
+});
+
 describe("úkol s popisem", () => {
   it("první řádek je název a zbytek popis", () => {
     const base = ctx();

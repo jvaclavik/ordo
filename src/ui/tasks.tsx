@@ -628,39 +628,43 @@ export function toggleComplete(
   if (ops.length > 0) dispatch({ type: "batch", ops });
 }
 
-export function askDeleteItems(
+export function deleteItems(
   items: Item[],
-  askConfirm: (value: ConfirmState) => void,
+  notify: (text: string, undo?: boolean, action?: string) => void,
   after?: () => void
 ) {
   const live = items.filter((item) => !item.isDeleted);
   if (live.length === 0) return;
   const one = live.length === 1 ? live[0] : null;
-  askConfirm({
-    title: one
-      ? one.type === "note"
-        ? "Smazat poznámku?"
-        : "Smazat kartu?"
-      : "Smazat vybrané karty?",
-    body: one
-      ? `„${one.title}“ půjde obnovit z koše.`
-      : `${live.length} vybraných půjde obnovit z koše.`,
-    confirm: "Smazat",
-    onConfirm: () => {
-      dispatch(
-        one
-          ? { type: "deleteItem", id: one.id }
-          : {
-              type: "batch",
-              ops: live.map((item) => ({
-                type: "deleteItem" as const,
-                id: item.id,
-              })),
-            }
-      );
-      after?.();
-    },
-  });
+  dispatch(
+    one
+      ? { type: "deleteItem", id: one.id }
+      : {
+          type: "batch",
+          ops: live.map((item) => ({
+            type: "deleteItem" as const,
+            id: item.id,
+          })),
+        }
+  );
+  after?.();
+  notify(
+    one
+      ? `„${one.title.trim() || "Bez názvu"}“ je v koši`
+      : `${live.length} vybraných je v koši`,
+    true,
+    "Obnovit"
+  );
+}
+
+export function deleteFolderToTrash(
+  folder: Folder,
+  notify: (text: string, undo?: boolean, action?: string) => void,
+  after?: () => void
+) {
+  dispatch({ type: "deleteFolder", id: folder.id });
+  after?.();
+  notify(`Složka „${folder.name}“ je v koši`, true, "Obnovit");
 }
 
 const DISMISSED_SUGGESTIONS = "ukoly-dismissed-suggestions";
@@ -1216,12 +1220,12 @@ export function BoardView({ folder }: { folder: Folder }) {
       (ui.showDone || isOpenItem(db, item))
   );
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-end gap-1">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="mb-1 flex shrink-0 items-center justify-end gap-1">
         <SortMenu folder={folder} />
         <DoneFilter showDone={ui.showDone} onChange={ui.setShowDone} />
       </div>
-      <div className="board-row">
+      <div className="board-row board-fill -mx-4 min-h-0 w-[calc(100%+2rem)] flex-1 px-4 lg:-mx-8 lg:w-[calc(100%+4rem)] lg:px-8">
         {statuses.map((status) => {
           const column = items
             .filter((item) => item.statusId === status.id)
@@ -1385,7 +1389,7 @@ function BoardColumn({
     <section
       ref={setNodeRef}
       className={cx(
-        "board-col flex max-h-[70dvh] flex-col rounded-lg border bg-panel p-3",
+        "board-col flex max-h-[70dvh] min-h-0 flex-col rounded-lg border bg-panel p-3",
         showMark ? "border-accent" : "border-line"
       )}
       data-meaning={status.meaning}

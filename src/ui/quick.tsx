@@ -25,7 +25,9 @@ import {
   suggestFolders,
 } from "../domain/select.ts";
 import { DictateButton } from "./dictate.tsx";
+import { registerDraftFolderUndo } from "./draftFolder.ts";
 import { Dot } from "./folders.tsx";
+import { placeCreated } from "./move.ts";
 import { useUi, type QuickKind } from "./state.tsx";
 import { Button, control, cx, Dialog, TagMark } from "./ui.tsx";
 
@@ -78,6 +80,12 @@ export function QuickAdd() {
   const suggestions = suggestFolders(db, parsed.title).filter(
     (folder) => folder.id !== (parsed.folderId ?? quick?.folderId ?? null)
   );
+  useEffect(() => {
+    return registerDraftFolderUndo(
+      () => folderOverride !== null,
+      () => setFolderOverride(null)
+    );
+  }, [folderOverride]);
   if (!quick) return null;
 
   const removeChip = (chip: Chip) => {
@@ -120,30 +128,42 @@ export function QuickAdd() {
     }
     const inbox = inboxFolder(db);
     if (!inbox) return;
-    const folderId = folderOverride ?? quick.folderId ?? inbox.id;
-    const folder = byId(db.folders, folderId) ?? inbox;
+    const base = byId(db.folders, quick.folderId) ?? inbox;
+    const folder = byId(db.folders, folderOverride ?? base.id) ?? base;
+    const filing = folderOverride !== null && folder.id !== base.id;
+    const home = filing ? base : folder;
     const statusId =
-      quick.statusId && quick.folderId === folder.id
+      !filing && quick.statusId && quick.folderId === folder.id
         ? quick.statusId
-        : resolvedOpen(db, folder)?.id ?? null;
+        : resolvedOpen(db, home)?.id ?? null;
     const { ops, itemIds } = opsFromTaskDraft(db, text, {
-      folderId: folder.id,
+      folderId: home.id,
       statusId,
       dateRole: "due",
-      applyRules: folder.system === "inbox",
+      applyRules: !filing && folder.system === "inbox",
       ids: () => nanoid(10),
       today,
     });
     if (itemIds.length === 0) return;
-    const next = dispatch({ type: "batch", ops });
-    const moved = itemIds
-      .map((id) => byId(next.items, id))
-      .filter((item) => item && item.folderId !== inbox.id);
-    if (folder.system === "inbox" && moved.length === 1) {
-      const home = byId(next.folders, moved[0]?.folderId ?? null);
-      ui.pushToast(home ? `Zařazeno do ${home.name}` : "Zařazeno", true);
-    } else if (folder.system === "inbox" && moved.length > 1) {
-      ui.pushToast("Zařazeno podle pravidel.", true);
+    const created = dispatch({ type: "batch", ops });
+    const fileOps = filing ? placeCreated(created, itemIds, folder.id) : [];
+    const next =
+      fileOps.length > 0 ? dispatch({ type: "batch", ops: fileOps }) : created;
+    if (fileOps.length > 0) {
+      ui.pushToast(`Zařazeno do ${folder.name}`, true);
+    } else if (!filing && folder.system === "inbox") {
+      const moved = itemIds
+        .map((id) => byId(next.items, id))
+        .filter((item) => item && item.folderId !== inbox.id);
+      if (moved.length === 1) {
+        const ruleHome = byId(next.folders, moved[0]?.folderId ?? null);
+        ui.pushToast(
+          ruleHome ? `Zařazeno do ${ruleHome.name}` : "Zařazeno",
+          true
+        );
+      } else if (moved.length > 1) {
+        ui.pushToast("Zařazeno podle pravidel.", true);
+      }
     }
     ui.select(itemIds.length === 1 ? itemIds[0] ?? null : null);
     ui.closeQuick();
@@ -200,7 +220,7 @@ export function QuickAdd() {
 
   return (
     <Dialog
-      title={kind === "note" ? "Nová poznámka" : "Nová položka"}
+      title={kind === "note" ? "Nová poznámka" : "Přidat"}
       onClose={ui.closeQuick}
       onConfirm={submit}
       onKeyDown={onSuggestKey}
@@ -374,7 +394,12 @@ export function QuickAdd() {
                 key={folder.id}
                 tone={selected ? "solid" : "ghost"}
                 aria-pressed={selected}
-                onClick={() => setFolderOverride(folder.id)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  setFolderOverride((current) =>
+                    current === folder.id ? null : folder.id
+                  )
+                }
               >
                 {selected && <Check size={14} />}
                 {folderTrail(db, folder.id)

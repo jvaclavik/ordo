@@ -3,6 +3,7 @@ import {
   Calendar,
   House,
   Menu,
+  MoreHorizontal,
   Plus,
   Redo2,
   Search,
@@ -30,6 +31,7 @@ import { mapStatus } from "../domain/select.ts";
 import { CalendarBoard } from "./calendar.tsx";
 import { Detail } from "./detail.tsx";
 import { DragLayer } from "./dnd.tsx";
+import { revertLast, undoDraftFolder, useDraftFolder } from "./draftFolder.ts";
 import { FolderPicker } from "./folderPick.tsx";
 import { FolderDialog, FolderTree, RootDrop } from "./folders.tsx";
 import { placeMany } from "./move.ts";
@@ -49,7 +51,7 @@ import { QuickAdd } from "./quick.tsx";
 import { SettingsPage } from "./settings.tsx";
 import { useUi } from "./state.tsx";
 import {
-  askDeleteItems,
+  deleteItems,
   indentListedTask,
   toggleComplete,
   visibleTaskIds,
@@ -259,8 +261,8 @@ function Frame() {
           </div>
         </div>
       )}
-      <div className="min-w-0 lg:h-full lg:min-h-0 lg:overflow-y-auto">
-        <main className="min-w-0 px-4 pb-24 pt-5 lg:px-8 lg:pb-12 lg:pt-6">
+      <div className="min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden">
+        <main className="min-w-0 px-4 pb-24 pt-5 lg:flex lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:px-8 lg:pt-6">
           {(snap.memoryOnly || snap.persistError) && (
             <p className="mb-4 rounded-md bg-warn/15 px-3 py-2 text-sm">
               {snap.memoryOnly
@@ -274,15 +276,13 @@ function Frame() {
               <Menu size={20} />
             </IconButton>
             <p className="font-display text-xl leading-none text-ink">Ordo</p>
+            <HistoryMenu />
             <span className="ml-auto flex items-center gap-1">
               <IconButton
                 label={`Hledat (${modLabel}K)`}
                 onClick={() => ui.setSearchOpen(true)}
               >
                 <Search size={18} />
-              </IconButton>
-              <IconButton label="Zpět" onClick={undo}>
-                <Undo2 size={18} />
               </IconButton>
             </span>
           </div>
@@ -293,20 +293,14 @@ function Frame() {
             >
               <Search size={18} />
             </IconButton>
-            <IconButton label="Zpět" onClick={undo}>
-              <Undo2 size={18} />
-            </IconButton>
-            <IconButton label="Znovu" onClick={redo}>
-              <Redo2 size={18} />
-            </IconButton>
             <Button
               tone="solid"
-              title="Přidat (mezerník)"
+              title="Přidat úkol (mezerník)"
               onClick={() =>
                 ui.openQuick({ folderId: folderFromLocation(location) })
               }
             >
-              <Plus size={16} /> Přidat
+              <Plus size={16} /> Přidat úkol
             </Button>
           </div>
           {ui.picked.length > 0 && <BulkBar />}
@@ -375,8 +369,8 @@ function Frame() {
           >
             <span>{toast.text}</span>
             {toast.undo && (
-              <button type="button" onClick={undo}>
-                Vrátit
+              <button type="button" data-history-undo onClick={revertLast}>
+                {toast.action ?? "Vrátit"}
               </button>
             )}
           </div>
@@ -386,10 +380,38 @@ function Frame() {
   );
 }
 
+const editedFields = new WeakSet<EventTarget>();
+
+function textEdited(target: EventTarget | null) {
+  return target !== null && editedFields.has(target);
+}
+
 function Hotkeys() {
   const snap = useSnap();
   const ui = useUi();
   const [location] = useLocation();
+  useEffect(() => {
+    const mark = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLTextAreaElement) editedFields.add(target);
+      else if (
+        target instanceof HTMLInputElement &&
+        (target.type === "text" || target.type === "search")
+      )
+        editedFields.add(target);
+      else if (target instanceof HTMLElement && target.isContentEditable)
+        editedFields.add(target);
+    };
+    const clear = (event: Event) => {
+      if (event.target) editedFields.delete(event.target);
+    };
+    document.addEventListener("input", mark);
+    document.addEventListener("focusin", clear);
+    return () => {
+      document.removeEventListener("input", mark);
+      document.removeEventListener("focusin", clear);
+    };
+  }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.isComposing || event.defaultPrevented) return;
@@ -428,25 +450,27 @@ function Hotkeys() {
         return;
       }
       if (
-        !layerOpen() &&
-        !typing &&
         mod &&
         !event.altKey &&
+        !event.shiftKey &&
         event.key.toLowerCase() === "z"
       ) {
+        if (undoDraftFolder()) {
+          event.preventDefault();
+          return;
+        }
+        if (textEdited(target)) return;
         event.preventDefault();
-        if (event.shiftKey) redo();
-        else undo();
+        undo();
         return;
       }
       if (
-        !layerOpen() &&
-        !typing &&
         mod &&
-        !event.shiftKey &&
         !event.altKey &&
-        event.key.toLowerCase() === "y"
+        ((event.shiftKey && event.key.toLowerCase() === "z") ||
+          (!event.shiftKey && event.key.toLowerCase() === "y"))
       ) {
+        if (textEdited(target)) return;
         event.preventDefault();
         redo();
         return;
@@ -549,8 +573,8 @@ function Hotkeys() {
         (event.key === "Delete" || event.key === "Backspace") &&
         !event.repeat
       ) {
-        const focused = target?.closest<HTMLElement>("[data-task-id]")?.dataset
-          .taskId;
+        const focused =
+          target?.closest<HTMLElement>("[data-task-id]")?.dataset.taskId;
         const ids =
           ui.picked.length > 0
             ? ui.picked
@@ -565,7 +589,7 @@ function Hotkeys() {
         });
         if (items.length === 0) return;
         event.preventDefault();
-        askDeleteItems(items, ui.askConfirm, () => {
+        deleteItems(items, ui.pushToast, () => {
           if (items.some((item) => item.id === ui.selectedId))
             ui.setSelected(null);
           if (ui.picked.length > 0) ui.clearPicked();
@@ -844,7 +868,7 @@ function BulkBar() {
             const item = byId(db.items, id);
             return item ? [item] : [];
           });
-          askDeleteItems(items, ui.askConfirm, () => ui.clearPicked());
+          deleteItems(items, ui.pushToast, () => ui.clearPicked());
         }}
       >
         Smazat
@@ -871,14 +895,101 @@ function BulkBar() {
   );
 }
 
+function HistoryMenu() {
+  const { past, future } = useSnap();
+  const draft = useDraftFolder();
+  const canUndo = past.length > 0 || draft;
+  const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState({ top: 0, left: 0 });
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: Event) => {
+      if (
+        !(event.target instanceof Node) ||
+        !ref.current?.contains(event.target)
+      )
+        setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  const run = (action: () => void, enabled: boolean) => {
+    if (!enabled) return;
+    setOpen(false);
+    action();
+  };
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label="Akce"
+        aria-expanded={open}
+        aria-haspopup="menu"
+        data-history-undo=""
+        className="grid size-8 place-items-center rounded-md text-muted hover:bg-black/5 hover:text-ink dark:hover:bg-white/10"
+        onClick={() => {
+          const rect = ref.current?.getBoundingClientRect();
+          if (rect) setPlace({ top: rect.bottom + 4, left: rect.left });
+          setOpen((value) => !value);
+        }}
+      >
+        <MoreHorizontal size={18} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          data-history-undo=""
+          className="fixed z-50 min-w-36 rounded-lg border border-line bg-raised p-1 shadow-[var(--shadow)]"
+          style={{ top: place.top, left: place.left }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canUndo}
+            data-history-undo=""
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-black/5 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-white/10 dark:disabled:hover:bg-transparent"
+            onClick={() => run(revertLast, canUndo)}
+          >
+            <Undo2 size={16} />
+            Zpět
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={future.length === 0}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-black/5 disabled:opacity-40 disabled:hover:bg-transparent dark:hover:bg-white/10 dark:disabled:hover:bg-transparent"
+            onClick={() => run(redo, future.length > 0)}
+          >
+            <Redo2 size={16} />
+            Znovu
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Sidebar() {
   const { db } = useSnap();
   const ui = useUi();
   const tags = alive(db.tags);
   return (
-    <div className="flex h-full flex-col gap-5 py-4">
+    <div className="h-full overflow-x-auto overflow-y-auto py-4">
       <div className="grid gap-5 px-4">
-        <p className="px-3 font-display text-3xl leading-none text-ink">Ordo</p>
+        <div className="flex items-center gap-1 px-3">
+          <p className="font-display text-3xl leading-none text-ink">Ordo</p>
+          <HistoryMenu />
+        </div>
         <nav className="grid gap-1">
           <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
           <Side
@@ -889,44 +1000,47 @@ function Sidebar() {
           <Side href="/people" label="Lidé" icon={<Users size={18} />} />
         </nav>
       </div>
-      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto">
-        <div className="grid min-w-full gap-0.5 [&>*]:min-w-0">
-          <Side href="/" label="Domů" icon={<House size={18} />} tree />
-          <FolderTree />
-          <RootDrop />
-          <button
-            type="button"
-            className="flex w-full items-center gap-1.5 rounded-md py-2 pr-0.5 pl-1 text-sm font-medium text-accent hover:bg-accent-soft"
-            onClick={() => ui.setFolderEdit({ id: null, parentId: null })}
-          >
-            <span className="size-5 shrink-0" />
-            <span className="grid size-6 place-items-center">
-              <Plus size={16} />
-            </span>
-            Nová složka
-          </button>
-        </div>
-        {tags.length > 0 && (
-          <div className="mt-4 grid gap-1 px-4">
-            <p className="px-2 text-xs text-muted">Štítky</p>
-            {tags.map((tag) => (
-              <TagChip
-                key={tag.id}
-                id={tag.id}
-                name={tag.name}
-                color={tag.color}
-              />
-            ))}
-          </div>
-        )}
+      <div className="mt-5 grid min-w-full gap-0.5 [&>*]:min-w-0">
+        <Side href="/" label="Domů" icon={<House size={18} />} tree />
+        <FolderTree />
+        <RootDrop />
+        <button
+          type="button"
+          className="flex w-full items-center gap-1.5 rounded-md py-2 pr-0.5 pl-1 text-sm text-muted! hover:bg-black/5 hover:text-ink! dark:hover:bg-white/10"
+          onClick={() => ui.setFolderEdit({ id: null, parentId: null })}
+        >
+          <span className="size-5 shrink-0" />
+          <span className="grid size-6 place-items-center">
+            <Plus size={16} />
+          </span>
+          Nová složka
+        </button>
       </div>
-      <nav className="grid gap-1 px-4">
+      {tags.length > 0 && (
+        <div className="mt-4 grid gap-1 px-4">
+          <p className="px-2 text-xs text-muted">Štítky</p>
+          {tags.map((tag) => (
+            <TagChip
+              key={tag.id}
+              id={tag.id}
+              name={tag.name}
+              color={tag.color}
+            />
+          ))}
+        </div>
+      )}
+      <nav className="mt-5 grid gap-1 px-4">
         <Side
           href="/settings"
           label="Nastavení"
           icon={<Settings size={18} />}
         />
-        <Side href="/trash" label="Koš" icon={<Trash2 size={18} />} />
+        <Side
+          href="/trash"
+          label="Koš"
+          icon={<Trash2 size={18} />}
+          dropId="trash"
+        />
       </nav>
     </div>
   );
@@ -975,22 +1089,32 @@ function Side({
   label,
   icon,
   tree = false,
+  dropId,
 }: {
   href: string;
   label: string;
   icon: ReactNode;
   tree?: boolean;
+  dropId?: string;
 }) {
   const ui = useUi();
   const [location] = useLocation();
+  const drop = useDroppable({
+    id: dropId ?? `nav:${href}`,
+    disabled: dropId === undefined,
+  });
   const active = location === href;
+  const over = dropId !== undefined && drop.isOver;
   return (
     <Link
       href={href}
+      ref={drop.setNodeRef}
       className={cx(
         "flex min-w-0 items-center rounded-md py-2",
         tree ? "gap-1.5 pr-0.5 pl-1" : "gap-3 px-3",
-        active
+        over
+          ? "bg-danger/10 text-danger"
+          : active
           ? "bg-accent-soft text-accent"
           : "hover:bg-black/5 dark:hover:bg-white/10"
       )}

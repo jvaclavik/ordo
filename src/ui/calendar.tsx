@@ -1,7 +1,13 @@
 import { useDroppable } from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { nanoid } from "nanoid";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { dispatch, useSnap } from "../data/store.tsx";
 import {
   addMonths,
@@ -14,12 +20,16 @@ import {
 } from "../domain/dates.ts";
 import { byId, inboxFolder, resolvedOpen } from "../domain/db.ts";
 import { planOnDay } from "../domain/horizon.ts";
+import { keyBetween } from "../domain/ordering.ts";
+import type { Op } from "../domain/op.ts";
 import { opsFromTaskDraft, parseQuickAdd } from "../domain/quickAdd.ts";
 import { folderTrail, isChecked, isOpenItem, suggestFolders } from "../domain/select.ts";
 import type { Item, NewItem, Priority } from "../domain/types.ts";
+import { registerDraftFolderUndo } from "./draftFolder.ts";
 import { DictateButton } from "./dictate.tsx";
 import { FolderGlyph } from "./folders.tsx";
 import { useUi } from "./state.tsx";
+import { placeCreated } from "./move.ts";
 import { clickItem, FolderHint, itemMarked, toggleComplete } from "./tasks.tsx";
 import {
   Button,
@@ -67,33 +77,74 @@ function dayKind(item: Item, day: string): "due" | "plan" {
   return dueDateKey(item.dueAt) === day ? "due" : "plan";
 }
 
+function automaticDayRank(
+  left: Item,
+  right: Item,
+  day: string,
+  open: (item: Item) => boolean
+) {
+  const openRank = Number(!open(left)) - Number(!open(right));
+  if (openRank !== 0) return openRank;
+  const dueRank =
+    Number(dayKind(left, day) !== "due") - Number(dayKind(right, day) !== "due");
+  if (dueRank !== 0) return dueRank;
+  const leftTime =
+    dayKind(left, day) === "due" ? dueTime(left.dueAt, left.dueHasTime) : null;
+  const rightTime =
+    dayKind(right, day) === "due"
+      ? dueTime(right.dueAt, right.dueHasTime)
+      : null;
+  if (leftTime && !rightTime) return -1;
+  if (!leftTime && rightTime) return 1;
+  if (leftTime && rightTime && leftTime !== rightTime)
+    return leftTime < rightTime ? -1 : 1;
+  const rank = priorityRank(left.priority) - priorityRank(right.priority);
+  if (rank !== 0) return rank;
+  return left.title.localeCompare(right.title, "cs");
+}
+
 export function orderedDayItems(
   items: Item[],
   day: string,
   open: (item: Item) => boolean
 ): Item[] {
-  return itemsOnDay(items, day).sort((left, right) => {
-    const openRank = Number(!open(left)) - Number(!open(right));
-    if (openRank !== 0) return openRank;
-    const dueRank =
-      Number(dayKind(left, day) !== "due") -
-      Number(dayKind(right, day) !== "due");
-    if (dueRank !== 0) return dueRank;
-    const leftTime =
-      dayKind(left, day) === "due"
-        ? dueTime(left.dueAt, left.dueHasTime)
-        : null;
-    const rightTime =
-      dayKind(right, day) === "due"
-        ? dueTime(right.dueAt, right.dueHasTime)
-        : null;
-    if (leftTime && !rightTime) return -1;
-    if (!leftTime && rightTime) return 1;
-    if (leftTime && rightTime && leftTime !== rightTime)
-      return leftTime < rightTime ? -1 : 1;
-    const rank = priorityRank(left.priority) - priorityRank(right.priority);
-    if (rank !== 0) return rank;
-    return left.title.localeCompare(right.title, "cs");
+  const rows = itemsOnDay(items, day);
+  const manual = rows.some((item) => item.dayOrder);
+  return rows.sort((left, right) => {
+    if (manual) {
+      const leftKey = left.dayOrder ?? "";
+      const rightKey = right.dayOrder ?? "";
+      if (leftKey !== rightKey) {
+        if (!leftKey) return 1;
+        if (!rightKey) return -1;
+        return leftKey < rightKey ? -1 : 1;
+      }
+    }
+    return automaticDayRank(left, right, day, open);
+  });
+}
+
+export function dayMoveIds(
+  ids: string[],
+  movingId: string,
+  beforeId: string
+): string[] | null {
+  if (movingId === beforeId) return null;
+  if (!ids.includes(movingId) || !ids.includes(beforeId)) return null;
+  const next = ids.filter((id) => id !== movingId);
+  const index = next.indexOf(beforeId);
+  if (index < 0) return null;
+  next.splice(index, 0, movingId);
+  if (next.every((id, at) => id === ids[at])) return null;
+  return next;
+}
+
+export function dayOrderOps(ids: string[]): Op[] {
+  let previous: string | null = null;
+  return ids.map((id) => {
+    const dayOrder = keyBetween(previous, null);
+    previous = dayOrder;
+    return { type: "updateItem", id, patch: { dayOrder } };
   });
 }
 
@@ -435,6 +486,12 @@ function DayComposer({
   const suggestions = suggestFolders(db, parsed.title).filter(
     (folder) => folder.id !== (parsed.folderId ?? baseFolder?.id ?? null)
   );
+  useEffect(() => {
+    return registerDraftFolderUndo(
+      () => folderOverride !== null,
+      () => setFolderOverride(null)
+    );
+  }, [folderOverride]);
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -450,17 +507,19 @@ function DayComposer({
   const commit = () => {
     const folder =
       byId(db.folders, folderOverride ?? baseFolder?.id ?? null) ?? baseFolder;
-    if (!folder) return;
+    if (!folder || !baseFolder) return;
+    const filing = folderOverride !== null && folder.id !== baseFolder.id;
+    const home = filing ? baseFolder : folder;
     const { ops, itemIds } = opsFromTaskDraft(db, draft, {
-      folderId: folder.id,
-      statusId: resolvedOpen(db, folder)?.id ?? null,
+      folderId: home.id,
+      statusId: resolvedOpen(db, home)?.id ?? null,
       dateRole: "due",
-      applyRules: folder.system === "inbox",
+      applyRules: !filing && folder.system === "inbox",
       ids: () => nanoid(10),
       today: todayKey(),
     });
     if (itemIds.length === 0) return;
-    const next = dispatch({
+    const created = dispatch({
       type: "batch",
       ops: ops.map((op) =>
         op.type === "createItem"
@@ -468,17 +527,24 @@ function DayComposer({
           : op
       ),
     });
+    const fileOps = filing ? placeCreated(created, itemIds, folder.id) : [];
+    const next =
+      fileOps.length > 0 ? dispatch({ type: "batch", ops: fileOps }) : created;
     setDraft("");
     setFolderOverride(null);
+    if (fileOps.length > 0) {
+      ui.pushToast(`Zařazeno do ${folder.name}`, true);
+      return;
+    }
     const inbox = inboxFolder(db);
-    if (!inbox || baseFolder?.system !== "inbox") return;
+    if (!inbox || filing || baseFolder.system !== "inbox") return;
     const moved = itemIds.flatMap((id) => {
       const item = byId(next.items, id);
       return item && item.folderId !== inbox.id ? [item] : [];
     });
     if (moved.length !== 1) return;
-    const home = byId(next.folders, moved[0]?.folderId ?? null);
-    ui.pushToast(home ? `Zařazeno do ${home.name}` : "Zařazeno", true);
+    const ruleHome = byId(next.folders, moved[0]?.folderId ?? null);
+    ui.pushToast(ruleHome ? `Zařazeno do ${ruleHome.name}` : "Zařazeno", true);
   };
   return (
     <div className="mt-1">
@@ -519,7 +585,9 @@ function DayComposer({
         onBlur={(event) => {
           if (
             event.relatedTarget instanceof Element &&
-            event.relatedTarget.closest("[data-dictate], [data-folder-suggest]")
+            event.relatedTarget.closest(
+              "[data-dictate], [data-folder-suggest], [data-history-undo]"
+            )
           )
             return;
           if (skip.current) {
@@ -570,8 +638,6 @@ function DayItems({
   day: string;
   today: string;
 }) {
-  const { db } = useSnap();
-  const ui = useUi();
   if (items.length === 0)
     return <p className="text-sm text-muted">Na tenhle den nic není.</p>;
   const showTime = items.some(
@@ -579,85 +645,140 @@ function DayItems({
       dayKind(item, day) === "due" && dueTime(item.dueAt, item.dueHasTime)
   );
   return (
-    <div className="grid gap-0.5">
-      {items.map((item) => {
-        const kind = dayKind(item, day);
-        const time =
-          kind === "due" ? dueTime(item.dueAt, item.dueHasTime) : null;
-        const checked = isChecked(db, item);
-        const late = kind === "due" && day < today && isOpenItem(db, item);
-        const folder = byId(db.folders, item.folderId);
-        return (
-          <div
-            key={item.id}
-            data-task-id={item.id}
+    <SortableContext
+      items={items.map((item) => `item:${item.id}`)}
+      strategy={verticalListSortingStrategy}
+    >
+      <div className="grid gap-0.5" data-calendar-list="">
+        {items.map((item) => (
+          <DayItem key={item.id} item={item} day={day} today={today} showTime={showTime} />
+        ))}
+      </div>
+    </SortableContext>
+  );
+}
+
+function useDragGuard(isDragging: boolean) {
+  const dragged = useRef(false);
+  useEffect(() => {
+    if (isDragging) {
+      dragged.current = true;
+      return;
+    }
+    if (!dragged.current) return;
+    const timer = window.setTimeout(() => {
+      dragged.current = false;
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [isDragging]);
+  return () => {
+    if (!dragged.current) return false;
+    dragged.current = false;
+    return true;
+  };
+}
+
+function DayItem({
+  item,
+  day,
+  today,
+  showTime,
+}: {
+  item: Item;
+  day: string;
+  today: string;
+  showTime: boolean;
+}) {
+  const { db } = useSnap();
+  const ui = useUi();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({
+      id: `item:${item.id}`,
+      data: { kind: "item", itemId: item.id, calendarDay: day },
+    });
+  const dragClick = useDragGuard(isDragging);
+  const kind = dayKind(item, day);
+  const time = kind === "due" ? dueTime(item.dueAt, item.dueHasTime) : null;
+  const checked = isChecked(db, item);
+  const late = kind === "due" && day < today && isOpenItem(db, item);
+  const folder = byId(db.folders, item.folderId);
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      data-task-id={item.id}
+      className={cx(
+        "flex w-full cursor-grab items-start gap-1 rounded-md pr-1 active:cursor-grabbing",
+        hoverRow,
+        itemMarked(ui.picked, ui.selectedId, item.id) && "bg-accent/25",
+        isDragging && "opacity-40"
+      )}
+      {...attributes}
+      {...listeners}
+      tabIndex={-1}
+      role={undefined}
+      onMouseDown={(event) => {
+        listeners?.onMouseDown?.(event);
+        if (event.shiftKey) event.preventDefault();
+      }}
+    >
+      <label
+        className="grid size-9 shrink-0 place-items-center"
+        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <input
+          className="size-5"
+          type="checkbox"
+          checked={checked}
+          aria-label={checked ? "Označit jako otevřené" : "Označit jako hotové"}
+          onChange={() => toggleComplete(db, item, ui.askConfirm)}
+        />
+      </label>
+      <div className="min-w-0 flex-1 py-2">
+        <button
+          type="button"
+          className="flex w-full items-start gap-3 text-left"
+          onMouseDown={(event) => {
+            if (event.shiftKey) event.preventDefault();
+          }}
+          onClick={(event) => {
+            if (dragClick()) return;
+            clickItem(ui, item.id, event);
+          }}
+        >
+          {showTime && (
+            <span className="w-12 shrink-0 pt-0.5 text-sm tabular-nums text-muted">
+              {time}
+            </span>
+          )}
+          <span
             className={cx(
-              "flex w-full items-start gap-1 rounded-md pr-1",
-              hoverRow,
-              itemMarked(ui.picked, ui.selectedId, item.id) && "bg-accent/25"
+              "min-w-0 flex-1 truncate",
+              checked ? "text-muted line-through" : "font-medium"
             )}
           >
-            <label
-              className="grid size-9 shrink-0 place-items-center"
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <input
-                className="size-5"
-                type="checkbox"
-                checked={checked}
-                aria-label={
-                  checked ? "Označit jako otevřené" : "Označit jako hotové"
-                }
-                onChange={() => toggleComplete(db, item, ui.askConfirm)}
-              />
-            </label>
-            <div className="min-w-0 flex-1 py-2">
-              <button
-                type="button"
-                className="flex w-full items-start gap-3 text-left"
-                onMouseDown={(event) => {
-                  if (event.shiftKey) event.preventDefault();
-                }}
-                onClick={(event) => clickItem(ui, item.id, event)}
-              >
-                {showTime && (
-                  <span className="w-12 shrink-0 pt-0.5 text-sm tabular-nums text-muted">
-                    {time}
-                  </span>
-                )}
-                <span
-                  className={cx(
-                    "min-w-0 flex-1 truncate",
-                    checked ? "text-muted line-through" : "font-medium"
-                  )}
-                >
-                  {item.title}
-                </span>
-                <OpenMark />
-              </button>
-              <span
-                className={cx(
-                  "mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted",
-                  showTime && "pl-15"
-                )}
-              >
-                {folder && (
-                  <span className="inline-flex min-w-0 items-center gap-1">
-                    <FolderGlyph color={folder.color} className="h-3.5" />
-                    <span className="truncate">{folder.name}</span>
-                  </span>
-                )}
-                {isOpenItem(db, item) && <FolderHint item={item} />}
-                {late && (
-                  <span className="font-medium text-danger">po termínu</span>
-                )}
-                {item.priority && <PriorityMark priority={item.priority} />}
-              </span>
-            </div>
-          </div>
-        );
-      })}
+            {item.title}
+          </span>
+          <OpenMark />
+        </button>
+        <span
+          className={cx(
+            "mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted",
+            showTime && "pl-15"
+          )}
+        >
+          {folder && (
+            <span className="inline-flex min-w-0 items-center gap-1">
+              <FolderGlyph color={folder.color} className="h-3.5" />
+              <span className="truncate">{folder.name}</span>
+            </span>
+          )}
+          {isOpenItem(db, item) && <FolderHint item={item} />}
+          {late && <span className="font-medium text-danger">po termínu</span>}
+          {item.priority && <PriorityMark priority={item.priority} />}
+        </span>
+      </div>
     </div>
   );
 }

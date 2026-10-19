@@ -47,6 +47,7 @@ import {
 } from "./folderDrop.ts";
 import { FolderPicker } from "./folderPick.tsx";
 import { useUi } from "./state.tsx";
+import { deleteFolderToTrash } from "./tasks.tsx";
 import {
   Button,
   control,
@@ -245,13 +246,7 @@ function FolderMenu({ folder }: { folder: Folder }) {
               className="block w-full rounded-lg px-3 py-1.5 text-left text-sm hover:bg-danger/10"
               onClick={() => {
                 setOpen(false);
-                ui.askConfirm({
-                  title: "Smazat složku?",
-                  body: "Smaže i podsložky a jejich položky. Obnovit je půjde z koše.",
-                  confirm: "Smazat",
-                  onConfirm: () =>
-                    dispatch({ type: "deleteFolder", id: folder.id }),
-                });
+                deleteFolderToTrash(folder, ui.pushToast);
               }}
             >
               <span className="text-danger">Smazat</span>
@@ -1180,15 +1175,9 @@ export function FolderDialog() {
             <Button
               tone="danger"
               onClick={() =>
-                ui.askConfirm({
-                  title: "Smazat složku?",
-                  body: "Smaže i podsložky a jejich položky. Obnovit je půjde z koše.",
-                  confirm: "Smazat",
-                  onConfirm: () => {
-                    dispatch({ type: "deleteFolder", id: folder.id });
-                    ui.setFolderEdit(null);
-                  },
-                })
+                deleteFolderToTrash(folder, ui.pushToast, () =>
+                  ui.setFolderEdit(null)
+                )
               }
             >
               Smazat

@@ -207,12 +207,35 @@ export function HomePage() {
     <div>
       <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="font-display text-3xl">Domů</h1>
-        <Button onClick={() => ui.setFolderEdit({ id: null, parentId: null })}>
+        <button
+          type="button"
+          className="text-sm text-muted! hover:text-ink!"
+          onClick={() => ui.setFolderEdit({ id: null, parentId: null })}
+        >
           Nová složka
-        </Button>
+        </button>
       </div>
+      <RecentTasks />
       <HomeTree today={today} />
     </div>
+  );
+}
+
+function RecentTasks() {
+  const { db } = useSnap();
+  const items = visibleItems(db)
+    .filter(
+      (item) =>
+        item.type === "task" && !item.parentItemId && isOpenItem(db, item)
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+    .slice(0, 8);
+  if (items.length === 0) return null;
+  return (
+    <section className="mb-8">
+      <h2 className="mb-2 font-display text-2xl">Poslední úkoly</h2>
+      <ItemList items={items} showFolder />
+    </section>
   );
 }
 
@@ -456,8 +479,12 @@ function FolderScreen({
   const notes = items.filter((item) => item.type === "note");
   const tasks = items.filter((item) => item.type === "task");
   return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <div
+      className={
+        view === "board" ? "flex min-h-0 min-w-0 flex-1 flex-col" : undefined
+      }
+    >
+      <div className="mb-4 flex shrink-0 flex-wrap items-end justify-between gap-3">
         <div>
           <FolderCrumbs folderId={folder.id} parentsOnly />
           <div className="flex items-center gap-2.5">
@@ -1238,25 +1265,52 @@ export function TrashPage() {
         <p className="text-sm text-muted">Koš je prázdný.</p>
       )}
       {folders.map((folder) => (
-        <div key={folder.id} className="flex items-center justify-between py-1">
-          <span>{folder.name}</span>
-          <Button
-            onClick={() => dispatch({ type: "restoreFolder", id: folder.id })}
-          >
-            Obnovit
-          </Button>
-        </div>
+        <TrashRow
+          key={folder.id}
+          title={folder.name}
+          onRestore={() => dispatch({ type: "restoreFolder", id: folder.id })}
+          onPurge={() => {
+            dispatch({ type: "purgeFolder", id: folder.id });
+            ui.pushToast(`Složka „${folder.name}“ je smazaná natrvalo`, true);
+          }}
+        />
       ))}
       {items.map((item) => (
-        <div key={item.id} className="flex items-center justify-between py-1">
-          <span className="truncate">{item.title}</span>
-          <Button
-            onClick={() => dispatch({ type: "restoreItem", id: item.id })}
-          >
-            Obnovit
-          </Button>
-        </div>
+        <TrashRow
+          key={item.id}
+          title={item.title.trim() || "Bez názvu"}
+          onRestore={() => dispatch({ type: "restoreItem", id: item.id })}
+          onPurge={() => {
+            dispatch({ type: "purgeItem", id: item.id });
+            ui.pushToast(
+              `„${item.title.trim() || "Bez názvu"}“ je smazané natrvalo`,
+              true
+            );
+          }}
+        />
       ))}
+    </div>
+  );
+}
+
+function TrashRow({
+  title,
+  onRestore,
+  onPurge,
+}: {
+  title: string;
+  onRestore: () => void;
+  onPurge: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="min-w-0 truncate">{title}</span>
+      <span className="flex shrink-0 gap-1">
+        <Button onClick={onRestore}>Obnovit</Button>
+        <Button tone="danger" onClick={onPurge}>
+          Smazat
+        </Button>
+      </span>
     </div>
   );
 }

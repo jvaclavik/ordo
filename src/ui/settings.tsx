@@ -113,7 +113,7 @@ export function SettingsPage() {
             označí hotovo
           </li>
           <li>Shift nebo {modLabel} přidá další karty do výběru</li>
-          <li>Delete nabídne smazání vybrané karty</li>
+          <li>Delete přesune vybranou kartu do koše</li>
           <li>
             {modLabel}Z vrací poslední krok, Shift+{modLabel}Z ho zopakuje
           </li>

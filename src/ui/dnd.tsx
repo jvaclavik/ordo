@@ -41,6 +41,8 @@ import {
 import { Dot } from "./folders.tsx";
 import { placeMany, placeOp, statusForMeaning } from "./move.ts";
 import { useUi } from "./state.tsx";
+import { dayMoveIds, dayOrderOps } from "./calendar.tsx";
+import { deleteItems } from "./tasks.tsx";
 
 const collide: CollisionDetection = (args) => {
   const hits = pointerWithin(args);
@@ -377,7 +379,8 @@ export function DragLayer({ children }: { children: ReactNode }) {
     const folderId =
       data?.kind === "item" && overId ? taskFolderId(overId) : null;
     const name = folderId ? byId(db.folders, folderId)?.name ?? null : null;
-    const label = name ? `Do složky ${name}` : "";
+    const label =
+      overId === "trash" ? "Do koše" : name ? `Do složky ${name}` : "";
     if (itemLabelKey.current === label) return;
     itemLabelKey.current = label;
     setItemLabel(label || null);
@@ -388,7 +391,12 @@ export function DragLayer({ children }: { children: ReactNode }) {
     itemLabelKey.current = "";
     setItemLabel(null);
     const data = event.active.data.current as
-      | { kind?: string; itemId?: string; folderId?: string }
+      | {
+          kind?: string;
+          itemId?: string;
+          folderId?: string;
+          calendarDay?: string;
+        }
       | undefined;
     const overId = event.over ? String(event.over.id) : null;
     const pointer = pointerClient(
@@ -426,7 +434,7 @@ export function DragLayer({ children }: { children: ReactNode }) {
         dropOnBoard(data.itemId, board);
         return;
       }
-      if (overId) moveItem(data.itemId, overId);
+      if (overId) moveItem(data.itemId, overId, data.calendarDay);
     }
   };
 
@@ -536,8 +544,32 @@ export function DragLayer({ children }: { children: ReactNode }) {
     );
   };
 
-  const moveItem = (itemId: string, overId: string) => {
+  const moveItem = (itemId: string, overId: string, calendarDay?: string) => {
     const ids = selectionOf(itemId);
+    if (overId === "trash") {
+      const rows = ids.flatMap((id) => {
+        const row = byId(db.items, id);
+        return row && !row.isDeleted ? [row] : [];
+      });
+      deleteItems(rows, ui.pushToast, () => {
+        if (ui.selectedId && ids.includes(ui.selectedId)) ui.setSelected(null);
+        if (rows.length > 1) ui.clearPicked();
+      });
+      return;
+    }
+    if (calendarDay && ids.length === 1 && overId.startsWith("item:")) {
+      const beforeId = overId.slice("item:".length);
+      const listed = [
+        ...document.querySelectorAll<HTMLElement>(
+          "[data-calendar-list] [data-task-id]"
+        ),
+      ].flatMap((row) => (row.dataset.taskId ? [row.dataset.taskId] : []));
+      if (listed.includes(itemId) && listed.includes(beforeId)) {
+        const next = dayMoveIds(listed, itemId, beforeId);
+        if (next) dispatch({ type: "batch", ops: dayOrderOps(next) });
+        return;
+      }
+    }
     if (ids.length > 1) {
       moveMany(ids, overId);
       return;
