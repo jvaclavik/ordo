@@ -19,6 +19,7 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
+import { isUntouched } from "../data/syncMap.ts";
 import { isPaletteColor } from "../domain/color.ts";
 import { addDays, todayKey } from "../domain/dates.ts";
 import {
@@ -70,6 +71,7 @@ import {
   FolderGlyph,
   treePad,
 } from "./folders.tsx";
+import { loadDemo } from "./guide.tsx";
 import { MarkdownLink } from "./links.tsx";
 import { useUi } from "./state.tsx";
 import { BoardView, ItemList, ListView } from "./tasks.tsx";
@@ -215,9 +217,43 @@ export function HomePage() {
           Nová složka
         </button>
       </div>
+      <EmptyWelcome />
       <RecentTasks />
       <HomeTree today={today} />
     </div>
+  );
+}
+
+function EmptyWelcome() {
+  const { db } = useSnap();
+  const ui = useUi();
+  const inbox = inboxFolder(db);
+  if (!isUntouched(db) || !inbox) return null;
+  return (
+    <section className="mb-8 rounded-xl border border-line bg-panel px-4 py-4">
+      <h2 className="font-display text-2xl">Zatím tu nic není</h2>
+      <p className="mt-1 mb-3 max-w-xl text-sm text-muted">
+        Naplň ukázkou, ať je vidět složky, nástěnka, kalendář, opakování a
+        návrhy. Až ji nebudeš chtít, v nastavení všechna data smažeš.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          tone="solid"
+          onClick={() => {
+            loadDemo(inbox.id);
+            ui.pushToast("Ukázka je naplněná", true);
+          }}
+        >
+          Naplň ukázkou
+        </Button>
+        <Link
+          href="/pruvodce"
+          className="inline-flex items-center rounded-md bg-black/[0.04] px-3 py-1.5 text-sm font-medium hover:bg-black/10 dark:bg-white/[0.06] dark:hover:bg-white/10"
+        >
+          Co Ordo umí
+        </Link>
+      </div>
+    </section>
   );
 }
 

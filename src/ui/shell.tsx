@@ -34,6 +34,7 @@ import { DragLayer } from "./dnd.tsx";
 import { revertLast, undoDraftFolder, useDraftFolder } from "./draftFolder.ts";
 import { FolderPicker } from "./folderPick.tsx";
 import { FolderDialog, FolderTree, RootDrop } from "./folders.tsx";
+import { GuidePage } from "./guide.tsx";
 import { placeMany } from "./move.ts";
 import {
   Capture,
@@ -319,6 +320,7 @@ function Frame() {
             <Route path="/calendar" component={CalendarRoute} />
             <Route path="/add" component={AddRoute} />
             <Route path="/settings" component={SettingsPage} />
+            <Route path="/pruvodce" component={GuidePage} />
             <Route path="/trash" component={TrashPage} />
             <Route path="/view/:id" component={ViewPage} />
             <Route>
@@ -984,21 +986,10 @@ function Sidebar() {
   const ui = useUi();
   const tags = alive(db.tags);
   return (
-    <div className="h-full overflow-x-auto overflow-y-auto py-4">
-      <div className="grid gap-5 px-4">
-        <div className="flex items-center gap-1 px-3">
-          <p className="font-display text-3xl leading-none text-ink">Ordo</p>
-          <HistoryMenu />
-        </div>
-        <nav className="grid gap-1">
-          <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
-          <Side
-            href="/calendar"
-            label="Kalendář"
-            icon={<Calendar size={18} />}
-          />
-          <Side href="/people" label="Lidé" icon={<Users size={18} />} />
-        </nav>
+    <div className="flex h-full min-h-0 flex-col overflow-x-auto overflow-y-auto py-4">
+      <div className="flex items-center gap-1 px-7">
+        <p className="font-display text-3xl leading-none text-ink">Ordo</p>
+        <HistoryMenu />
       </div>
       <div className="mt-5 grid min-w-full gap-0.5 [&>*]:min-w-0">
         <Side href="/" label="Domů" icon={<House size={18} />} tree />
@@ -1016,32 +1007,43 @@ function Sidebar() {
           Nová složka
         </button>
       </div>
-      {tags.length > 0 && (
-        <div className="mt-4 grid gap-1 px-4">
-          <p className="px-2 text-xs text-muted">Štítky</p>
-          {tags.map((tag) => (
-            <TagChip
-              key={tag.id}
-              id={tag.id}
-              name={tag.name}
-              color={tag.color}
-            />
-          ))}
-        </div>
-      )}
-      <nav className="mt-5 grid gap-1 px-4">
-        <Side
-          href="/settings"
-          label="Nastavení"
-          icon={<Settings size={18} />}
-        />
-        <Side
-          href="/trash"
-          label="Koš"
-          icon={<Trash2 size={18} />}
-          dropId="trash"
-        />
-      </nav>
+      <div className="mt-auto grid gap-5 pt-8">
+        <nav className="grid gap-1 px-4">
+          <Side href="/today" label="Dnes" icon={<Sun size={18} />} />
+          <Side
+            href="/calendar"
+            label="Kalendář"
+            icon={<Calendar size={18} />}
+          />
+          <Side href="/people" label="Lidé" icon={<Users size={18} />} />
+        </nav>
+        {tags.length > 0 && (
+          <div className="grid gap-1 px-4">
+            <p className="px-2 text-xs text-muted">Štítky</p>
+            {tags.map((tag) => (
+              <TagChip
+                key={tag.id}
+                id={tag.id}
+                name={tag.name}
+                color={tag.color}
+              />
+            ))}
+          </div>
+        )}
+        <nav className="grid gap-1 px-4">
+          <Side
+            href="/settings"
+            label="Nastavení"
+            icon={<Settings size={18} />}
+          />
+          <Side
+            href="/trash"
+            label="Koš"
+            icon={<Trash2 size={18} />}
+            dropId="trash"
+          />
+        </nav>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { Link } from "wouter";
 import { dispatch, useSnap } from "../data/store.tsx";
 import {
   getSyncView,
@@ -7,11 +8,15 @@ import {
   setSyncEnabled,
   subscribeSync,
 } from "../data/sync.ts";
+import { isUntouched } from "../data/syncMap.ts";
 import { todayKey } from "../domain/dates.ts";
 import { alive, byId, inboxFolder, isValidDb } from "../domain/db.ts";
+import { freshDb } from "../domain/reduce.ts";
 import { orderedRules } from "../domain/rules.ts";
 import { activeFolders } from "../domain/select.ts";
+import type { Ctx } from "../domain/types.ts";
 import { FolderPicker } from "./folderPick.tsx";
+import { loadDemo } from "./guide.tsx";
 import { useUi } from "./state.tsx";
 import { ThemeSwitch } from "./theme.tsx";
 import { Button, control, Field, modLabel } from "./ui.tsx";
@@ -73,6 +78,7 @@ export function SettingsPage() {
           </label>
         </div>
       </section>
+      <DataSection />
       <Rules />
       <section>
         <h2 className="mb-2 font-display text-2xl">Archiv</h2>
@@ -199,6 +205,63 @@ function SyncPanel() {
           </form>
         </>
       )}
+    </section>
+  );
+}
+
+function wipeCtx(): Ctx {
+  return {
+    now: new Date().toISOString(),
+    today: todayKey(),
+    id: () => nanoid(10),
+  };
+}
+
+function DataSection() {
+  const { db } = useSnap();
+  const ui = useUi();
+  const inbox = inboxFolder(db);
+  const empty = isUntouched(db);
+  return (
+    <section className="grid gap-3">
+      <h2 className="font-display text-2xl">Data</h2>
+      <p className="text-sm text-muted">
+        Ukázku naplníš, dokud je aplikace prázdná. Smazání vezme všechno v
+        tomhle prohlížeči.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {empty && inbox && (
+          <Button
+            tone="solid"
+            onClick={() => {
+              loadDemo(inbox.id);
+              ui.pushToast("Ukázka je naplněná", true);
+            }}
+          >
+            Naplň ukázkou
+          </Button>
+        )}
+        <Button
+          tone="danger"
+          onClick={() =>
+            ui.askConfirm({
+              title: "Smazat všechna data?",
+              body: "Úkoly, složky, štítky i pravidla v tomhle prohlížeči zmizí. Když běží synchronizace, smažou se i na ostatních zařízeních se stejným kódem. Zpět je vrátí, dokud aplikaci nezavřeš.",
+              confirm: "Smazat",
+              onConfirm: () =>
+                dispatch({ type: "replaceDb", db: freshDb(wipeCtx()) }),
+            })
+          }
+        >
+          Smazat všechna data
+        </Button>
+        <Link
+          href="/pruvodce"
+          className="inline-flex items-center rounded-md bg-black/[0.04] px-3 py-1.5 text-sm font-medium hover:bg-black/10 dark:bg-white/[0.06] dark:hover:bg-white/10"
+        >
+          Co Ordo umí
+        </Link>
+      </div>
     </section>
   );
 }

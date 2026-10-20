@@ -1,3 +1,4 @@
+import { addDays, dueDateKey } from "./dates.ts";
 import {
   alive,
   byId,
@@ -9,11 +10,17 @@ import {
   statusesOf,
   statusMeaning,
 } from "./db.ts";
-import { byOrder } from "./ordering.ts";
-import { addDays, dueDateKey } from "./dates.ts";
 import { planIsDue } from "./horizon.ts";
+import { byOrder } from "./ordering.ts";
 import { fold, words } from "./text.ts";
-import type { Db, Folder, Item, SavedView, Status, ViewQuery } from "./types.ts";
+import type {
+  Db,
+  Folder,
+  Item,
+  SavedView,
+  Status,
+  ViewQuery,
+} from "./types.ts";
 
 export function activeFolders(db: Db): Folder[] {
   return alive(db.folders)
@@ -39,8 +46,15 @@ export function folderTrail(db: Db, folderId: string | null): Folder[] {
   return trail;
 }
 
-export function folderItems(db: Db, folderId: string, includeDescendants: boolean): Item[] {
-  const ids = new Set([folderId, ...(includeDescendants ? descendantFolderIds(db, folderId) : [])]);
+export function folderItems(
+  db: Db,
+  folderId: string,
+  includeDescendants: boolean
+): Item[] {
+  const ids = new Set([
+    folderId,
+    ...(includeDescendants ? descendantFolderIds(db, folderId) : []),
+  ]);
   return visibleItems(db)
     .filter((item) => ids.has(item.folderId))
     .sort(byOrder);
@@ -48,9 +62,13 @@ export function folderItems(db: Db, folderId: string, includeDescendants: boolea
 
 export function visibleItems(db: Db): Item[] {
   const hiddenFolders = new Set(
-    db.folders.filter((folder) => folder.isDeleted || folder.isArchived).map((folder) => folder.id),
+    db.folders
+      .filter((folder) => folder.isDeleted || folder.isArchived)
+      .map((folder) => folder.id)
   );
-  return alive(db.items).filter((item) => !item.isArchived && !hiddenFolders.has(item.folderId));
+  return alive(db.items).filter(
+    (item) => !item.isArchived && !hiddenFolders.has(item.folderId)
+  );
 }
 
 export function isChecked(db: Db, item: Item): boolean {
@@ -64,22 +82,37 @@ export function isOpenItem(db: Db, item: Item): boolean {
   return !isClosedOut(db, item.statusId);
 }
 
-export function checkboxTarget(db: Db, item: Item): { folderId: string; statusId: string } | null {
+export function checkboxTarget(
+  db: Db,
+  item: Item
+): { folderId: string; statusId: string } | null {
   const folder = byId(db.folders, item.folderId);
   if (!folder) return null;
   const open = resolvedOpen(db, folder);
   const closed = resolvedClosed(db, folder);
   if (!open || !closed) return null;
-  return { folderId: folder.id, statusId: item.statusId === closed.id ? open.id : closed.id };
+  return {
+    folderId: folder.id,
+    statusId: item.statusId === closed.id ? open.id : closed.id,
+  };
 }
 
-export function mapStatus(db: Db, fromStatusId: string | null, toFolderId: string): { statusId: string | null; choices: Status[] } {
+export function mapStatus(
+  db: Db,
+  fromStatusId: string | null,
+  toFolderId: string
+): { statusId: string | null; choices: Status[] } {
   const meaning = statusMeaning(db, fromStatusId) ?? "todo";
-  const choices = statusesOf(db, toFolderId).filter((status) => status.meaning === meaning);
+  const choices = statusesOf(db, toFolderId).filter(
+    (status) => status.meaning === meaning
+  );
   if (choices.length === 1) return { statusId: choices[0]!.id, choices: [] };
   if (choices.length === 0) {
     const folder = byId(db.folders, toFolderId);
-    return { statusId: folder ? (resolvedOpen(db, folder)?.id ?? null) : null, choices: [] };
+    return {
+      statusId: folder ? resolvedOpen(db, folder)?.id ?? null : null,
+      choices: [],
+    };
   }
   return { statusId: null, choices };
 }
@@ -95,17 +128,25 @@ export function openSubtasks(db: Db, itemId: string): Item[] {
 }
 
 export function tagsOf(db: Db, itemId: string) {
-  const ids = new Set(alive(db.itemTags).filter((link) => link.itemId === itemId).map((link) => link.tagId));
-  return alive(db.tags).filter((tag) => ids.has(tag.id)).sort((a, b) => a.name.localeCompare(b.name, "cs"));
+  const ids = new Set(
+    alive(db.itemTags)
+      .filter((link) => link.itemId === itemId)
+      .map((link) => link.tagId)
+  );
+  return alive(db.tags)
+    .filter((tag) => ids.has(tag.id))
+    .sort((a, b) => a.name.localeCompare(b.name, "cs"));
 }
 
 export function tagItems(db: Db, tagId: string): Item[] {
   const ids = new Set(
     alive(db.itemTags)
       .filter((link) => link.tagId === tagId)
-      .map((link) => link.itemId),
+      .map((link) => link.itemId)
   );
-  return visibleItems(db).filter((item) => ids.has(item.id)).sort(byOrder);
+  return visibleItems(db)
+    .filter((item) => ids.has(item.id))
+    .sort(byOrder);
 }
 
 export function searchTags(db: Db, query: string) {
@@ -118,22 +159,32 @@ export function searchTags(db: Db, query: string) {
 }
 
 export function linksOf(db: Db, itemId: string) {
-  return alive(db.itemLinks).filter((link) => link.fromId === itemId || link.toId === itemId);
+  return alive(db.itemLinks).filter(
+    (link) => link.fromId === itemId || link.toId === itemId
+  );
 }
 
-export function otherId(link: { fromId: string; toId: string }, itemId: string): string {
+export function otherId(
+  link: { fromId: string; toId: string },
+  itemId: string
+): string {
   return link.fromId === itemId ? link.toId : link.fromId;
 }
 
 export function dependenciesOf(db: Db, itemId: string) {
-  return alive(db.dependencies).filter((row) => row.itemId === itemId || row.dependsOnId === itemId);
+  return alive(db.dependencies).filter(
+    (row) => row.itemId === itemId || row.dependsOnId === itemId
+  );
 }
 
 export function blockingItems(db: Db, itemId: string): Item[] {
   return alive(db.dependencies)
     .filter((row) => row.itemId === itemId)
     .map((row) => byId(db.items, row.dependsOnId))
-    .filter((item): item is Item => item !== null && !item.isDeleted && !isClosedOut(db, item.statusId));
+    .filter(
+      (item): item is Item =>
+        item !== null && !item.isDeleted && !isClosedOut(db, item.statusId)
+    );
 }
 
 export function blockedItems(db: Db, itemId: string): Item[] {
@@ -144,14 +195,21 @@ export function blockedItems(db: Db, itemId: string): Item[] {
 }
 
 function isReady(db: Db, item: Item): boolean {
-  return item.type === "task" && isOpenItem(db, item) && blockingItems(db, item.id).length === 0;
+  return (
+    item.type === "task" &&
+    isOpenItem(db, item) &&
+    blockingItems(db, item.id).length === 0
+  );
 }
 
 const SOON_DAYS = 7;
 
 export type FocusId = "overdue" | "today" | "soon" | "priority" | "ready";
 
-export function focusSections(db: Db, today: string): { id: FocusId; items: Item[] }[] {
+export function focusSections(
+  db: Db,
+  today: string
+): { id: FocusId; items: Item[] }[] {
   const until = addDays(today, SOON_DAYS);
   const overdue: Item[] = [];
   const dueToday: Item[] = [];
@@ -179,11 +237,21 @@ export function focusSections(db: Db, today: string): { id: FocusId; items: Item
     }
     if (isReady(db, item)) ready.push(item);
   }
-  const byDue = (a: Item, b: Item) => (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || byOrder(a, b);
+  const byDue = (a: Item, b: Item) =>
+    (a.dueAt ?? "").localeCompare(b.dueAt ?? "") || byOrder(a, b);
   overdue.sort(byDue);
   dueToday.sort(byDue);
-  soon.sort((a, b) => (soonKey(a, today, until) ?? "").localeCompare(soonKey(b, today, until) ?? "") || byOrder(a, b));
-  priority.sort((a, b) => Number(a.priority !== "urgent") - Number(b.priority !== "urgent") || byOrder(a, b));
+  soon.sort(
+    (a, b) =>
+      (soonKey(a, today, until) ?? "").localeCompare(
+        soonKey(b, today, until) ?? ""
+      ) || byOrder(a, b)
+  );
+  priority.sort(
+    (a, b) =>
+      Number(a.priority !== "urgent") - Number(b.priority !== "urgent") ||
+      byOrder(a, b)
+  );
   ready.sort(byOrder);
   return [
     { id: "overdue" as const, items: overdue },
@@ -196,7 +264,7 @@ export function focusSections(db: Db, today: string): { id: FocusId; items: Item
 
 function soonKey(item: Item, today: string, until: string): string | null {
   const marks = [dueDateKey(item.dueAt), item.plannedFor].filter(
-    (key): key is string => Boolean(key && key > today && key <= until),
+    (key): key is string => Boolean(key && key > today && key <= until)
   );
   marks.sort();
   return marks[0] ?? null;
@@ -207,8 +275,12 @@ export function searchItems(db: Db, query: string): Item[] {
   if (!needle) return [];
   return visibleItems(db)
     .filter((item) => {
-      const tagNames = tagsOf(db, item.id).map((tag) => tag.name).join(" ");
-      return fold(`${item.title}\n${item.body ?? ""}\n${tagNames}`).includes(needle);
+      const tagNames = tagsOf(db, item.id)
+        .map((tag) => tag.name)
+        .join(" ");
+      return fold(`${item.title}\n${item.body ?? ""}\n${tagNames}`).includes(
+        needle
+      );
     })
     .slice(0, 40);
 }
@@ -217,7 +289,8 @@ export function suggestFolders(db: Db, title: string): Folder[] {
   const tokens = words(title);
   if (tokens.length === 0) return [];
   const scores = new Map<string, number>();
-  const add = (folderId: string, amount: number) => scores.set(folderId, (scores.get(folderId) ?? 0) + amount);
+  const add = (folderId: string, amount: number) =>
+    scores.set(folderId, (scores.get(folderId) ?? 0) + amount);
   for (const folder of activeFolders(db)) {
     if (folder.system === "inbox") continue;
     const name = fold(folder.name);
@@ -227,30 +300,59 @@ export function suggestFolders(db: Db, title: string): Folder[] {
       else if (name.includes(token)) add(folder.id, 1);
     }
   }
+  // „koupit“ ve dvou složkách žádnou nenavrhne. Počítá se slovo, které žije jen v jedné.
+  const homes = new Map<string, Set<string>>();
   for (const item of alive(db.items)) {
-    const itemWords = new Set(words(item.title));
-    if (tokens.some((token) => itemWords.has(token))) add(item.folderId, 1);
+    const folder = byId(db.folders, item.folderId);
+    if (!folder || folder.isDeleted || folder.system === "inbox") continue;
+    for (const token of words(item.title)) {
+      const set = homes.get(token) ?? new Set<string>();
+      set.add(folder.id);
+      homes.set(token, set);
+    }
+  }
+  for (const token of tokens) {
+    const set = homes.get(token);
+    if (!set || set.size !== 1) continue;
+    add([...set][0]!, 1);
   }
   return [...scores.entries()]
     .filter(([, score]) => score > 0)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([id]) => byId(db.folders, id))
-    .filter((folder): folder is Folder => folder !== null && !folder.isDeleted && folder.system !== "inbox");
+    .filter(
+      (folder): folder is Folder =>
+        folder !== null && !folder.isDeleted && folder.system !== "inbox"
+    );
 }
 
 export function applyQuery(db: Db, query: ViewQuery): Item[] {
   const folderIds = query.folderId
-    ? new Set([query.folderId, ...(query.includeDescendants ? descendantFolderIds(db, query.folderId) : [])])
+    ? new Set([
+        query.folderId,
+        ...(query.includeDescendants
+          ? descendantFolderIds(db, query.folderId)
+          : []),
+      ])
     : null;
   return visibleItems(db)
     .filter((item) => {
       if (folderIds && !folderIds.has(item.folderId)) return false;
       if (query.type && item.type !== query.type) return false;
       if (query.openOnly && !isOpenItem(db, item)) return false;
-      if (query.assigneeId && item.assigneeId !== query.assigneeId) return false;
-      if (query.tagId && !tagsOf(db, item.id).some((tag) => tag.id === query.tagId)) return false;
-      if (query.text && !fold(`${item.title}\n${item.body ?? ""}`).includes(fold(query.text))) return false;
+      if (query.assigneeId && item.assigneeId !== query.assigneeId)
+        return false;
+      if (
+        query.tagId &&
+        !tagsOf(db, item.id).some((tag) => tag.id === query.tagId)
+      )
+        return false;
+      if (
+        query.text &&
+        !fold(`${item.title}\n${item.body ?? ""}`).includes(fold(query.text))
+      )
+        return false;
       return true;
     })
     .sort(byOrder);
@@ -263,14 +365,19 @@ export function personItems(db: Db, personId: string): Item[] {
 }
 
 export function openTaskCount(db: Db, folderId: string): number {
-  return folderItems(db, folderId, true).filter((item) => item.type === "task" && isOpenItem(db, item)).length;
+  return folderItems(db, folderId, true).filter(
+    (item) => item.type === "task" && isOpenItem(db, item)
+  ).length;
 }
 
 export function inboxWaitingCount(db: Db): number {
   const inbox = inboxFolder(db);
   if (!inbox) return 0;
   return alive(db.items).filter(
-    (item) => item.folderId === inbox.id && !item.isArchived && !isClosedOut(db, item.statusId),
+    (item) =>
+      item.folderId === inbox.id &&
+      !item.isArchived &&
+      !isClosedOut(db, item.statusId)
   ).length;
 }
 
@@ -287,4 +394,12 @@ export function viewsFor(db: Db, folderId: string | null): SavedView[] {
     .sort(byOrder);
 }
 
-export { byId, inboxFolder, resolvedClosed, resolvedOpen, statusesOf, statusMeaning, alive };
+export {
+  alive,
+  byId,
+  inboxFolder,
+  resolvedClosed,
+  resolvedOpen,
+  statusesOf,
+  statusMeaning,
+};
