@@ -145,12 +145,16 @@ export function isCalendarShown(
 
 // The calendar Ordo writes tasks into is never read back as foreign events,
 // or every task would show twice.
-export function readableCalendars(state: Pick<GcalView, "calendars">): GcalCalendar[] {
+export function readableCalendars(
+  state: Pick<GcalView, "calendars">
+): GcalCalendar[] {
   return state.calendars.filter((calendar) => !calendar.managed);
 }
 
 function shownCalendars(): GcalCalendar[] {
-  return readableCalendars(view).filter((calendar) => isCalendarShown(view, calendar));
+  return readableCalendars(view).filter((calendar) =>
+    isCalendarShown(view, calendar)
+  );
 }
 
 let token: { value: string; expiresAt: number } | null = null;
@@ -197,7 +201,7 @@ function accessToken(force: boolean): Promise<string> {
   return tokenRequest;
 }
 
-export const googleApi: GoogleApi = async <T,>(
+export const googleApi: GoogleApi = async <T>(
   method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   options: { params?: Record<string, string>; body?: unknown } = {}
@@ -251,15 +255,15 @@ async function loadCalendars(force: boolean): Promise<GcalCalendar[]> {
   const raw: ApiCalendar[] = [];
   let pageToken: string | undefined;
   do {
-    const page = await google<{ items?: ApiCalendar[]; nextPageToken?: string }>(
-      "/users/me/calendarList",
-      {
-        minAccessRole: "reader",
-        maxResults: "250",
-        fields: CALENDAR_FIELDS,
-        ...(pageToken ? { pageToken } : {}),
-      }
-    );
+    const page = await google<{
+      items?: ApiCalendar[];
+      nextPageToken?: string;
+    }>("/users/me/calendarList", {
+      minAccessRole: "reader",
+      maxResults: "250",
+      fields: CALENDAR_FIELDS,
+      ...(pageToken ? { pageToken } : {}),
+    });
     raw.push(...(page.items ?? []));
     pageToken = page.nextPageToken;
   } while (pageToken);
@@ -278,7 +282,8 @@ async function loadCalendars(force: boolean): Promise<GcalCalendar[]> {
     {
       calendars,
       calendarsAt: Date.now(),
-      account: calendars.find((calendar) => calendar.primary)?.id ?? view.account,
+      account:
+        calendars.find((calendar) => calendar.primary)?.id ?? view.account,
     },
     true
   );
@@ -438,7 +443,10 @@ export async function disconnectGcal() {
   queueSave();
   sessionChanged();
   try {
-    await fetch("/api/gcal/logout", { method: "POST", credentials: "same-origin" });
+    await fetch("/api/gcal/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
   } catch {
     return;
   }
@@ -487,6 +495,24 @@ export function startGcal() {
   tick();
 }
 
+const OTHER_CALENDARS_KEY = "ordo-show-other-calendars";
+
+export function showOtherCalendars(): boolean {
+  try {
+    return localStorage.getItem(OTHER_CALENDARS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function setShowOtherCalendars(shown: boolean) {
+  try {
+    localStorage.setItem(OTHER_CALENDARS_KEY, shown ? "1" : "0");
+  } catch {
+    return;
+  }
+}
+
 export function useGcalMonth(month: string | null): CalEvent[] {
   const state = useGcal();
   useEffect(() => {
@@ -504,7 +530,9 @@ export function useGcalMonth(month: string | null): CalEvent[] {
   if (!bucket) return [];
   const hidden = new Set(
     state.calendars
-      .filter((calendar) => calendar.managed || !isCalendarShown(state, calendar))
+      .filter(
+        (calendar) => calendar.managed || !isCalendarShown(state, calendar)
+      )
       .map((calendar) => calendar.id)
   );
   return bucket.events.filter((event) => !hidden.has(event.calendarId));

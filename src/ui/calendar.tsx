@@ -8,7 +8,11 @@ import { CSS } from "@dnd-kit/utilities";
 import { Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useGcalMonth } from "../data/gcal.ts";
+import {
+  setShowOtherCalendars,
+  showOtherCalendars,
+  useGcalMonth,
+} from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
 import {
   addMonths,
@@ -221,6 +225,7 @@ export function CalendarBoard({
   const [month, setMonth] = useState(today.slice(0, 7));
   const [picked, setPicked] = useState(today);
   const [composerFocus, setComposerFocus] = useState(0);
+  const [others, setOthers] = useState(showOtherCalendars);
   const cells = monthCells(month);
   const label = new Date(`${month}-01T00:00:00`).toLocaleDateString("cs-CZ", {
     month: "long",
@@ -229,7 +234,8 @@ export function CalendarBoard({
   const open = (item: Item) => isOpenItem(db, item);
   const selected = orderedDayItems(items, picked, open);
   const monthEvents = useGcalMonth(external ? month : null);
-  const pickedEvents = eventsOnDay(monthEvents, picked);
+  const foreign = external && others ? monthEvents : [];
+  const pickedEvents = eventsOnDay(foreign, picked);
   const overdue = items
     .filter((item) => {
       const due = dueDateKey(item.dueAt);
@@ -266,6 +272,21 @@ export function CalendarBoard({
           </button>
         )}
       </div>
+      {external && (
+        <label className="flex items-center gap-2 px-1 text-sm text-muted">
+          <input
+            type="checkbox"
+            className="size-4 accent-[var(--accent)]"
+            checked={others}
+            onChange={(event) => {
+              const next = event.target.checked;
+              setOthers(next);
+              setShowOtherCalendars(next);
+            }}
+          />
+          Ostatní kalendáře
+        </label>
+      )}
       {external && <GcalNote />}
       {overdue.length > 0 && <Overdue items={overdue} today={today} />}
       <div className="overflow-hidden rounded-xl border border-line bg-panel">
@@ -287,7 +308,7 @@ export function CalendarBoard({
                 today={today}
                 active={day === picked}
                 items={orderedDayItems(items, day, open)}
-                events={eventsOnDay(monthEvents, day)}
+                events={eventsOnDay(foreign, day)}
                 onPick={() => {
                   setPicked(day);
                   setComposerFocus((current) => current + 1);

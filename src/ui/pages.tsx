@@ -18,7 +18,7 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useLocation, useParams, useSearch } from "wouter";
-import { useGcalMonth } from "../data/gcal.ts";
+import { showOtherCalendars, useGcalMonth } from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
 import { isUntouched } from "../data/syncMap.ts";
 import { isPaletteColor } from "../domain/color.ts";
@@ -420,7 +420,8 @@ export function TodayPage() {
   const { db } = useSnap();
   const today = todayKey();
   const sections = focusSections(db, today);
-  const events = eventsOnDay(useGcalMonth(today.slice(0, 7)), today);
+  const monthEvents = useGcalMonth(today.slice(0, 7));
+  const events = showOtherCalendars() ? eventsOnDay(monthEvents, today) : [];
   return (
     <div>
       <h1 className="mb-4 font-display text-3xl">Dnes</h1>
