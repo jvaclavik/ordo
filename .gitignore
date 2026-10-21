@@ -5,3 +5,10 @@ dist
 .DS_Store
 dev-dist
 .vercel
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
