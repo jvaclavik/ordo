@@ -61,7 +61,7 @@ const cards: {
     title: "Kalendář",
     icon: CalendarDays,
     tint: "var(--c11)",
-    text: "Termíny i plány na jednom místě. Den má svůj seznam.",
+    text: "Termíny i plány na jednom místě. Den má svůj seznam. S Google Kalendářem se úkoly synchronizují oběma směry.",
     extra: <CalendarPreview />,
   },
   {

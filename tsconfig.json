@@ -16,7 +16,9 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "allowJs": true,
+    "checkJs": true
   },
-  "include": ["src"]
+  "include": ["src", "api"]
 }

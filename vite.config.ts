@@ -2,9 +2,11 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { defineConfig } from "vitest/config";
+import { devApi } from "./scripts/devApi.ts";
 
 export default defineConfig({
   plugins: [
+    devApi(),
     tailwindcss(),
     react(),
     VitePWA({
@@ -57,13 +59,17 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2,wasm}"],
         navigateFallback: "index.html",
-        navigateFallbackDenylist: [/^\/sw\.js$/, /^\/workbox-.*\.js$/],
+        navigateFallbackDenylist: [
+          /^\/sw\.js$/,
+          /^\/workbox-.*\.js$/,
+          /^\/api\//,
+        ],
       },
       devOptions: { enabled: false },
     }),
   ],
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "api/**/*.test.ts"],
   },
 });

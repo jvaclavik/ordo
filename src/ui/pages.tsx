@@ -18,6 +18,7 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Link, useLocation, useParams, useSearch } from "wouter";
+import { useGcalMonth } from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
 import { isUntouched } from "../data/syncMap.ts";
 import { isPaletteColor } from "../domain/color.ts";
@@ -30,19 +31,20 @@ import {
 } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
 import { viewLabel } from "../domain/labels.ts";
+import { linkPhones } from "../domain/links.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import { splitNoteDraft, takeNoteIntent } from "../domain/noteIntent.ts";
 import { keyAtStart } from "../domain/ordering.ts";
 import { opsFromTaskLines, parseQuickAdd } from "../domain/quickAdd.ts";
 import {
   applyQuery,
-  childFolders,
   focusSections,
   folderItems,
   folderTrail,
   isOpenItem,
   searchItems,
   searchTags,
+  shownChildFolders,
   tagItems,
   visibleItems,
 } from "../domain/select.ts";
@@ -63,6 +65,7 @@ import {
   type Item,
   type Tag,
 } from "../domain/types.ts";
+import { eventsOnDay } from "../lib/gcalEvents.ts";
 import { CalendarBoard, PlanTargets } from "./calendar.tsx";
 import {
   Dot,
@@ -71,6 +74,7 @@ import {
   FolderGlyph,
   treePad,
 } from "./folders.tsx";
+import { GcalDayEvents, GcalNote } from "./gcal.tsx";
 import { loadDemo } from "./guide.tsx";
 import { MarkdownLink } from "./links.tsx";
 import { useUi } from "./state.tsx";
@@ -277,7 +281,8 @@ function RecentTasks() {
 
 function HomeTree({ today }: { today: string }) {
   const { db } = useSnap();
-  const folders = childFolders(db, null);
+  const ui = useUi();
+  const folders = shownChildFolders(db, null, ui.showHidden);
   if (folders.length === 0) {
     return <p className="text-sm text-muted">Zatím tu žádná složka není.</p>;
   }
@@ -308,9 +313,10 @@ function HomeFolder({
   stripe: boolean;
 }) {
   const { db } = useSnap();
+  const ui = useUi();
   const [location] = useLocation();
   const [open, setOpen] = useState(depth < 1);
-  const children = childFolders(db, folder.id);
+  const children = shownChildFolders(db, folder.id, ui.showHidden);
   const href = folder.system === "inbox" ? "/inbox" : `/folder/${folder.id}`;
   const active = location === href;
   const tasks = folderItems(db, folder.id, true).filter(
@@ -374,7 +380,11 @@ function HomeFolder({
           <Dot color={folder.color} icon={folder.icon} />
           <span className="min-w-0 flex-1">
             <span
-              className={cx("block truncate", depth === 0 && "font-medium")}
+              className={cx(
+                "block truncate",
+                depth === 0 && "font-medium",
+                folder.hidden && "text-muted"
+              )}
             >
               {folder.name}
             </span>
@@ -422,11 +432,19 @@ export function TodayPage() {
   const { db } = useSnap();
   const today = todayKey();
   const sections = focusSections(db, today);
+  const events = eventsOnDay(useGcalMonth(today.slice(0, 7)), today);
   return (
     <div>
       <h1 className="mb-4 font-display text-3xl">Dnes</h1>
       <PlanTargets />
-      {sections.length === 0 && (
+      <GcalNote />
+      {events.length > 0 && (
+        <section className="mb-5">
+          <h2 className="mb-2 font-display text-2xl">V kalendáři</h2>
+          <GcalDayEvents events={events} day={today} />
+        </section>
+      )}
+      {sections.length === 0 && events.length === 0 && (
         <p className="px-2 text-sm text-muted">Teď tu nic není.</p>
       )}
       {sections.map((section) => (
@@ -663,7 +681,7 @@ function NoteMarkdown({ source }: { source: string }) {
               a: MarkdownLink,
             }}
           >
-            {part.text}
+            {linkPhones(part.text)}
           </Markdown>
         )
       )}

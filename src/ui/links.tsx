@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { splitUrls } from "../domain/links.ts";
+import { splitLinks } from "../domain/links.ts";
 
 export function MarkdownLink({
   href,
@@ -8,8 +8,9 @@ export function MarkdownLink({
   href?: string | undefined;
   children?: ReactNode | undefined;
 }) {
+  const blank = Boolean(href && /^https?:/i.test(href));
   return (
-    <a href={href} target="_blank" rel="noreferrer">
+    <a href={href} {...(blank ? { target: "_blank", rel: "noreferrer" } : {})}>
       {children}
     </a>
   );
@@ -22,13 +23,16 @@ export function LinkedText({
   text: string;
   onActivate?: (event: { stopPropagation: () => void }) => void;
 }) {
-  return splitUrls(text).map((part, index) =>
-    part.kind === "url" ? (
+  return splitLinks(text).map((part, index) =>
+    part.kind === "text" ? (
+      <span key={index}>{part.value}</span>
+    ) : (
       <a
         key={index}
         href={part.href}
-        target="_blank"
-        rel="noreferrer"
+        {...(part.kind === "url"
+          ? { target: "_blank", rel: "noreferrer" }
+          : {})}
         className="underline underline-offset-2"
         onPointerDown={onActivate}
         onMouseDown={onActivate}
@@ -36,8 +40,6 @@ export function LinkedText({
       >
         {part.value}
       </a>
-    ) : (
-      <span key={index}>{part.value}</span>
     )
   );
 }

@@ -50,6 +50,18 @@ function getSnap() {
   return snap;
 }
 
+export function getDb(): Db {
+  return snap.db;
+}
+
+export function isStoreReady(): boolean {
+  return snap.ready;
+}
+
+export function subscribeStore(listener: () => void) {
+  return subscribe(listener);
+}
+
 export function useSnap() {
   return useSyncExternalStore(subscribe, getSnap, getSnap);
 }

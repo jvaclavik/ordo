@@ -17,7 +17,7 @@ import {
 } from "./quickAdd.ts";
 import { nextOccurrence } from "./recurrence.ts";
 import { freshDb, reduce } from "./reduce.ts";
-import { inboxWaitingCount, isChecked } from "./select.ts";
+import { folderConcealed, inboxWaitingCount, isChecked } from "./select.ts";
 import { fold } from "./text.ts";
 import type { Ctx, Db } from "./types.ts";
 
@@ -274,11 +274,13 @@ describe("rychlé přidání", () => {
     const db = freshDb(ctx());
     const spring = parseQuickAdd("vysadit javor na jaře", db, today);
     expect(spring.title).toBe("vysadit javor");
+    expect(spring.place).toBeNull();
     expect(spring.planFrom).toBe("2027-03-01");
     expect(spring.planUntil).toBe("2027-05-31");
     expect(spring.dueDay).toBeNull();
     const months = parseQuickAdd("koupit beton do třech měsíců", db, today);
     expect(months.title).toBe("koupit beton");
+    expect(months.place).toBeNull();
     expect(months.planFrom).toBe(today);
     expect(months.planUntil).toBe("2027-01-16");
     expect(months.chips.find((chip) => chip.kind === "horizon")?.label).toBe(
@@ -286,10 +288,12 @@ describe("rychlé přidání", () => {
     );
     const weekend = parseQuickAdd("vypnout topení na víkend", db, "2026-10-17");
     expect(weekend.title).toBe("vypnout topení");
+    expect(weekend.place).toBeNull();
     expect(weekend.planFrom).toBe("2026-10-17");
     expect(weekend.planUntil).toBe("2026-10-18");
     const next = parseQuickAdd("úkol na příští týden", db, today);
     expect(next.title).toBe("úkol");
+    expect(next.place).toBeNull();
     expect(next.dueDay).toBeNull();
     expect(next.planFrom).toBe("2026-10-19");
     expect(next.planUntil).toBe("2026-10-25");
@@ -833,5 +837,45 @@ describe("sestavení úkolu z parseru", () => {
     expect(item?.assigneeId).toBeTruthy();
     expect(next.tags.map((tag) => tag.name)).toContain("telefon");
     expect(next.people.map((person) => person.name)).toContain("Honza");
+  });
+});
+
+describe("skrytá složka", () => {
+  it("schová složku i její potomky a nechá inbox", () => {
+    const base = ctx();
+    const start = freshDb(base);
+    const inbox = start.folders[0]!;
+    const db = run(
+      start,
+      [
+        {
+          type: "createFolder",
+          id: "doma",
+          parentId: null,
+          name: "Doma",
+          icon: null,
+          color: null,
+          statusIds: { todo: "t", doing: "d", done: "n" },
+        },
+        {
+          type: "createFolder",
+          id: "kuchyne",
+          parentId: "doma",
+          name: "Kuchyně",
+          icon: null,
+          color: null,
+          statusIds: { todo: "t2", doing: "d2", done: "n2" },
+        },
+        { type: "updateFolder", id: "doma", patch: { hidden: true } },
+        { type: "updateFolder", id: inbox.id, patch: { hidden: true } },
+      ],
+      base
+    );
+    const parent = byId(db.folders, "doma");
+    const child = byId(db.folders, "kuchyne");
+    expect(parent?.hidden).toBe(true);
+    expect(byId(db.folders, inbox.id)?.hidden).toBe(false);
+    expect(parent && folderConcealed(db, parent)).toBe(true);
+    expect(child && folderConcealed(db, child)).toBe(true);
   });
 });

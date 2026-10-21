@@ -33,6 +33,7 @@ import { Detail } from "./detail.tsx";
 import { DragLayer } from "./dnd.tsx";
 import { revertLast, undoDraftFolder, useDraftFolder } from "./draftFolder.ts";
 import { FolderPicker } from "./folderPick.tsx";
+import { GcalNotices, GcalReturn } from "./gcal.tsx";
 import { FolderDialog, FolderTree, RootDrop } from "./folders.tsx";
 import { GuidePage } from "./guide.tsx";
 import { placeMany } from "./move.ts";
@@ -306,6 +307,8 @@ function Frame() {
           </div>
           {ui.picked.length > 0 && <BulkBar />}
           <Capture />
+          <GcalReturn />
+          <GcalNotices />
           <Switch>
             <Route path="/" component={HomePage} />
             <Route path="/today" component={TodayPage} />
@@ -442,6 +445,21 @@ function Hotkeys() {
           event.preventDefault();
           ui.setSelected(null);
         }
+        return;
+      }
+      if (
+        event.altKey &&
+        !mod &&
+        !event.shiftKey &&
+        event.code === "KeyH" &&
+        !event.repeat
+      ) {
+        event.preventDefault();
+        const next = !ui.showHidden;
+        ui.setShowHidden(next);
+        ui.pushToast(
+          next ? "Skryté složky jsou vidět" : "Skryté složky jsou schované"
+        );
         return;
       }
       if (mod && !event.altKey && event.key.toLowerCase() === "k") {
@@ -771,6 +789,7 @@ function CalendarRoute() {
         items={db.items.filter(
           (item) => !item.isDeleted && item.type === "task"
         )}
+        external
       />
     </div>
   );

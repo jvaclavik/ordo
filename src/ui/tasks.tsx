@@ -36,6 +36,8 @@ import { newItem } from "../domain/factory.ts";
 import { pullHashtags, removeToken } from "../domain/hashtags.ts";
 import { whenLabel } from "../domain/horizon.ts";
 import { priorityLabel } from "../domain/labels.ts";
+import { phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
+import { mapHref, routeHref } from "../domain/place.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
   indentOutline,
@@ -475,6 +477,87 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
   );
 }
 
+function Dictated({ item }: { item: Item }) {
+  const phones = phonesIn(item.title);
+  if (
+    !item.origin &&
+    !item.place &&
+    !item.spot &&
+    !item.amount &&
+    !item.variableSymbol &&
+    phones.length === 0
+  )
+    return null;
+  return (
+    <>
+      {item.origin && <span>{item.origin} →</span>}
+      {item.place && (
+        <a
+          href={mapHref(item.place)}
+          target="_blank"
+          rel="noreferrer"
+          title="Otevřít na mapě"
+          className="underline underline-offset-2 hover:text-ink"
+          onPointerDown={keepControl}
+          onMouseDown={keepControl}
+          onClick={keepControl}
+        >
+          {item.place}
+        </a>
+      )}
+      {item.place && (
+        <a
+          href={routeHref(item.place, item.origin)}
+          target="_blank"
+          rel="noreferrer"
+          title="Navigovat"
+          className="underline underline-offset-2 hover:text-ink"
+          onPointerDown={keepControl}
+          onMouseDown={keepControl}
+          onClick={keepControl}
+        >
+          Trasa
+        </a>
+      )}
+      {item.spot && <span>{item.spot}</span>}
+      {item.amount && <span>{item.amount}</span>}
+      {item.variableSymbol && <span>VS {item.variableSymbol}</span>}
+      {phones.map((phone) => {
+        const sms = smsHref(phone.value);
+        const whatsApp = whatsAppHref(phone.value);
+        return (
+          <span key={phone.href} className="inline-flex gap-2">
+            {sms && (
+              <a
+                href={sms}
+                className="underline underline-offset-2 hover:text-ink"
+                onPointerDown={keepControl}
+                onMouseDown={keepControl}
+                onClick={keepControl}
+              >
+                SMS
+              </a>
+            )}
+            {whatsApp && (
+              <a
+                href={whatsApp}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 hover:text-ink"
+                onPointerDown={keepControl}
+                onMouseDown={keepControl}
+                onClick={keepControl}
+              >
+                WhatsApp
+              </a>
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 function keepControl(
   event: PointerEvent | MouseEvent | { stopPropagation: () => void }
 ) {
@@ -882,6 +965,7 @@ export function TaskRow({
           )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
             {isOpenItem(db, item) && <FolderHint item={item} />}
+            <Dictated item={item} />
             {showFolder && folder && (
               <span>
                 {folderTrail(db, folder.id).map((entry, index) => (
@@ -1511,7 +1595,17 @@ function BoardCard({ item }: { item: Item }) {
   const tags = tagsOf(db, item.id);
   const repeat = recurrenceLabel(item);
   const when = whenLabel(item, todayKey());
-  const hasMeta = Boolean(when || repeat || tags.length > 0);
+  const hasMeta = Boolean(
+    when ||
+      repeat ||
+      tags.length > 0 ||
+      item.place ||
+      item.origin ||
+      item.spot ||
+      item.amount ||
+      item.variableSymbol ||
+      phonesIn(item.title).length > 0
+  );
   return (
     <article
       ref={setNodeRef}
@@ -1563,6 +1657,7 @@ function BoardCard({ item }: { item: Item }) {
           <span className="flex min-w-0 shrink items-center gap-2 text-xs leading-4 text-muted">
             {when && <span>{when}</span>}
             {repeat && <span>{repeat}</span>}
+            <Dictated item={item} />
             {tags.map((tag) => (
               <Link
                 key={tag.id}

@@ -8,6 +8,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Check, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useGcalMonth } from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
 import {
   addMonths,
@@ -25,9 +26,11 @@ import type { Op } from "../domain/op.ts";
 import { opsFromTaskDraft, parseQuickAdd } from "../domain/quickAdd.ts";
 import { folderTrail, isChecked, isOpenItem, suggestFolders } from "../domain/select.ts";
 import type { Item, NewItem, Priority } from "../domain/types.ts";
+import { eventCount, eventsOnDay, type CalEvent } from "../lib/gcalEvents.ts";
 import { registerDraftFolderUndo } from "./draftFolder.ts";
 import { DictateButton } from "./dictate.tsx";
 import { FolderGlyph } from "./folders.tsx";
+import { GcalDayEvents, GcalNote } from "./gcal.tsx";
 import { useUi } from "./state.tsx";
 import { placeCreated } from "./move.ts";
 import { clickItem, FolderHint, itemMarked, toggleComplete } from "./tasks.tsx";
@@ -154,6 +157,14 @@ function taskCount(count: number): string {
   return `${count} úkolů`;
 }
 
+function daySummary(events: number, tasks: number): string {
+  const parts = [
+    events > 0 ? eventCount(events) : null,
+    tasks > 0 ? taskCount(tasks) : null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : "nic";
+}
+
 function dayTitle(day: string): string {
   const text = parseDateKey(day).toLocaleDateString("cs-CZ", {
     weekday: "long",
@@ -193,9 +204,11 @@ export function placeCreatedOnDay(
 export function CalendarBoard({
   items,
   folderId = null,
+  external = false,
 }: {
   items: Item[];
   folderId?: string | null;
+  external?: boolean;
 }) {
   const { db } = useSnap();
   const today = todayKey();
@@ -209,6 +222,8 @@ export function CalendarBoard({
   });
   const open = (item: Item) => isOpenItem(db, item);
   const selected = orderedDayItems(items, picked, open);
+  const monthEvents = useGcalMonth(external ? month : null);
+  const pickedEvents = eventsOnDay(monthEvents, picked);
   const overdue = items
     .filter((item) => {
       const due = dueDateKey(item.dueAt);
@@ -242,6 +257,7 @@ export function CalendarBoard({
           <ChevronRight size={18} />
         </IconButton>
       </div>
+      {external && <GcalNote />}
       {overdue.length > 0 && <Overdue items={overdue} today={today} />}
       <div className="overflow-hidden rounded-xl border border-line bg-panel">
         <div className="grid grid-cols-7 border-b border-line text-center text-xs font-medium text-muted">
@@ -262,6 +278,7 @@ export function CalendarBoard({
                 today={today}
                 active={day === picked}
                 items={orderedDayItems(items, day, open)}
+                events={eventsOnDay(monthEvents, day)}
                 onPick={() => {
                   setPicked(day);
                   setComposerFocus((current) => current + 1);
@@ -284,10 +301,16 @@ export function CalendarBoard({
           <h3 className="font-display text-xl">{dayTitle(picked)}</h3>
           <span className="text-sm text-muted">
             {picked === today ? "dnes · " : ""}
-            {selected.length === 0 ? "nic" : taskCount(selected.length)}
+            {daySummary(pickedEvents.length, selected.length)}
           </span>
         </div>
-        <DayItems items={selected} day={picked} today={today} />
+        <GcalDayEvents events={pickedEvents} day={picked} />
+        {pickedEvents.length > 0 && selected.length > 0 && (
+          <div className="my-1 border-t border-line" />
+        )}
+        {(selected.length > 0 || pickedEvents.length === 0) && (
+          <DayItems items={selected} day={picked} today={today} />
+        )}
         <DayComposer
           day={picked}
           folderId={folderId}
@@ -335,6 +358,19 @@ function dotTone(item: Item, kind: "due" | "plan", done: boolean) {
   return "bg-accent";
 }
 
+function eventTint(color: string | null) {
+  if (!color) return undefined;
+  return {
+    background: `color-mix(in srgb, ${color} 22%, transparent)`,
+    boxShadow: `inset 2px 0 0 ${color}`,
+  };
+}
+
+function chipTime(event: CalEvent, day: string): string | null {
+  if (event.allDay || day !== event.startDay) return null;
+  return event.startTime;
+}
+
 function DayCell({
   day,
   index,
@@ -342,6 +378,7 @@ function DayCell({
   today,
   active,
   items,
+  events,
   onPick,
 }: {
   day: string;
@@ -350,21 +387,25 @@ function DayCell({
   today: string;
   active: boolean;
   items: Item[];
+  events: CalEvent[];
   onPick: () => void;
 }) {
   const { db } = useSnap();
   const drop = useDroppable({ id: `plan:${day}`, data: { kind: "plan", day } });
   const weekend = isoWeekday(day) >= 6;
-  const shown = items.slice(0, CHIP_LIMIT);
-  const extra = items.length - shown.length;
+  const shownEvents = events.slice(0, CHIP_LIMIT);
+  const shown = items.slice(0, CHIP_LIMIT - shownEvents.length);
+  const count = items.length + events.length;
+  const extra = count - shown.length - shownEvents.length;
   return (
     <button
       ref={drop.setNodeRef}
       type="button"
       aria-pressed={active}
-      aria-label={`${formatDay(day, today)}, ${
-        items.length === 0 ? "nic" : taskCount(items.length)
-      }`}
+      aria-label={`${formatDay(day, today)}, ${daySummary(
+        events.length,
+        items.length
+      )}`}
       onClick={onPick}
       className={cx(
         cellFrame(index, total),
@@ -387,15 +428,22 @@ function DayCell({
         >
           {Number(day.slice(-2))}
         </span>
-        {items.length > 1 && (
+        {count > 1 && (
           <span className="text-[11px] tabular-nums text-muted">
-            {items.length}
+            {count}
           </span>
         )}
       </span>
-      {items.length > 0 && (
+      {count > 0 && (
         <>
           <span className="mt-1 flex flex-wrap gap-1 md:hidden">
+            {shownEvents.map((event) => (
+              <span
+                key={event.id}
+                className="size-1.5 rounded-full bg-muted"
+                style={event.color ? { background: event.color } : undefined}
+              />
+            ))}
             {shown.map((item) => (
               <span
                 key={item.id}
@@ -412,6 +460,21 @@ function DayCell({
             )}
           </span>
           <span className="mt-1 hidden min-w-0 gap-1 md:grid">
+            {shownEvents.map((event) => {
+              const time = chipTime(event, day);
+              return (
+                <span
+                  key={event.id}
+                  className="min-w-0 truncate rounded-sm bg-black/[0.04] px-1 py-px text-xs leading-5 text-ink dark:bg-white/[0.08]"
+                  style={eventTint(event.color)}
+                >
+                  {time && (
+                    <span className="tabular-nums text-muted">{time} </span>
+                  )}
+                  {event.title}
+                </span>
+              );
+            })}
             {shown.map((item) => {
               const kind = dayKind(item, day);
               const time =

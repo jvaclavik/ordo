@@ -21,6 +21,8 @@ import {
 import { applyItemSort, clearItemSort, sortKeyFor } from "./itemSort.ts";
 import type { Op } from "./op.ts";
 import { keyAtEnd } from "./ordering.ts";
+import { storedAmount, storedSymbol } from "./dictate.ts";
+import { storedPlace } from "./place.ts";
 import { nextOccurrence, recurrenceOf, weekdaysTo } from "./recurrence.ts";
 import { matchingRule } from "./rules.ts";
 import { fold } from "./text.ts";
@@ -204,6 +206,7 @@ function createFolder(
     openStatusId: null,
     closedStatusId: null,
     isArchived: false,
+    hidden: false,
   };
   const statuses: Status[] = [
     {
@@ -276,6 +279,12 @@ function updateFolder(db: Db, id: string, patch: FolderPatch, ctx: Ctx): Db {
               patch.isArchived !== undefined
                 ? patch.isArchived
                 : row.isArchived,
+            hidden:
+              row.system === "inbox"
+                ? false
+                : patch.hidden !== undefined
+                ? patch.hidden
+                : row.hidden === true,
             updatedAt: ctx.now,
           }
         : row
@@ -505,6 +514,11 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
     dueHasTime: input.dueHasTime,
     plannedFor: input.plannedFor,
     planUntil: input.planUntil,
+    place: storedPlace(input.place),
+    origin: storedPlace(input.origin),
+    spot: storedPlace(input.spot),
+    amount: storedAmount(input.amount),
+    variableSymbol: storedSymbol(input.variableSymbol),
     parentItemId: input.parentItemId,
     seriesId: null,
     recurrenceFreq: null,
@@ -617,6 +631,26 @@ function updateItem(
                 ? patch.assigneeId
                 : row.assigneeId,
             ...when,
+            place:
+              patch.place !== undefined
+                ? storedPlace(patch.place)
+                : row.place ?? null,
+            origin:
+              patch.origin !== undefined
+                ? storedPlace(patch.origin)
+                : row.origin ?? null,
+            spot:
+              patch.spot !== undefined
+                ? storedPlace(patch.spot)
+                : row.spot ?? null,
+            amount:
+              patch.amount !== undefined
+                ? storedAmount(patch.amount)
+                : row.amount ?? null,
+            variableSymbol:
+              patch.variableSymbol !== undefined
+                ? storedSymbol(patch.variableSymbol)
+                : row.variableSymbol ?? null,
             parentItemId:
               patch.parentItemId !== undefined
                 ? patch.parentItemId

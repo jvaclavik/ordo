@@ -6,10 +6,17 @@ import {
   weekdayFromName,
 } from "./dates.ts";
 import { alive, byId, inboxFolder, resolvedOpen } from "./db.ts";
+import {
+  findMoney,
+  findSpokenPeople,
+  findSpots,
+  findSymbol,
+} from "./dictate.ts";
 import { newItem } from "./factory.ts";
 import { findHorizons } from "./horizon.ts";
 import type { DateRole, Op } from "./op.ts";
 import { priorityFromToken } from "./op.ts";
+import { findOrigin, findPlace } from "./place.ts";
 import { reduce } from "./reduce.ts";
 import { fold, foldWithMap, originalSpan } from "./text.ts";
 import type { Ctx, Db, Folder, Priority } from "./types.ts";
@@ -22,7 +29,12 @@ export type ChipKind =
   | "time"
   | "horizon"
   | "folder"
-  | "folderMissing";
+  | "folderMissing"
+  | "place"
+  | "origin"
+  | "spot"
+  | "amount"
+  | "symbol";
 
 export type Chip = {
   kind: ChipKind;
@@ -44,6 +56,11 @@ export type ParsedQuickAdd = {
   planUntil: string | null;
   folderId: string | null;
   folderMissing: boolean;
+  place: string | null;
+  origin: string | null;
+  spot: string | null;
+  amount: string | null;
+  variableSymbol: string | null;
 };
 
 type Hit = {
@@ -278,7 +295,9 @@ export function parseQuickAdd(
     });
   }
 
-  for (const match of folded.matchAll(/@([\p{L}\p{N}_-]{1,40})/gu)) {
+  for (const match of folded.matchAll(
+    /(?<![\p{L}\p{N}._%+-])@([\p{L}\p{N}_-]{1,40})/gu
+  )) {
     hits.push({
       start: match.index,
       end: match.index + match[0].length,
@@ -315,6 +334,70 @@ export function parseQuickAdd(
   )
     title = "Bez názvu";
 
+  const taken = [...spans];
+  const accept = (hit: { start: number; end: number } | null) => {
+    if (
+      !hit ||
+      taken.some((span) => hit.start < span.end && span.start < hit.end)
+    )
+      return false;
+    taken.push(hit);
+    return true;
+  };
+  const placeHit = findPlace(firstLine);
+  const place = placeHit && accept(placeHit) ? placeHit.name : null;
+  if (placeHit && place)
+    chips.push({
+      kind: "place",
+      label: place,
+      start: placeHit.start,
+      end: placeHit.end,
+    });
+  const originHit = findOrigin(firstLine, place ? placeHit : null);
+  const origin = originHit && accept(originHit) ? originHit.name : null;
+  if (originHit && origin)
+    chips.push({
+      kind: "origin",
+      label: origin,
+      start: originHit.start,
+      end: originHit.end,
+    });
+  const spots = findSpots(firstLine).filter((hit) => accept(hit));
+  const spot =
+    spots.length > 0 ? spots.map((hit) => hit.label).join(", ") : null;
+  for (const hit of spots)
+    chips.push({
+      kind: "spot",
+      label: hit.label,
+      start: hit.start,
+      end: hit.end,
+    });
+  const moneyHit = findMoney(firstLine);
+  const amount = moneyHit && accept(moneyHit) ? moneyHit.label : null;
+  if (moneyHit && amount)
+    chips.push({
+      kind: "amount",
+      label: amount,
+      start: moneyHit.start,
+      end: moneyHit.end,
+    });
+  const symbolHit = findSymbol(firstLine);
+  const variableSymbol =
+    symbolHit && accept(symbolHit) ? symbolHit.symbol : null;
+  if (symbolHit && variableSymbol)
+    chips.push({
+      kind: "symbol",
+      label: `VS ${variableSymbol}`,
+      start: symbolHit.start,
+      end: symbolHit.end,
+    });
+  for (const hit of findSpokenPeople(firstLine)) {
+    if (!accept(hit)) continue;
+    const name = knownPerson(db, hit.label);
+    personNames.push(name);
+    chips.push({ kind: "person", label: name, start: hit.start, end: hit.end });
+  }
+
   return {
     title,
     body: rest || null,
@@ -328,6 +411,11 @@ export function parseQuickAdd(
     planUntil,
     folderId,
     folderMissing,
+    place,
+    origin,
+    spot,
+    amount,
+    variableSymbol,
   };
 }
 
@@ -396,6 +484,11 @@ export function opsFromQuickAdd(
       dueHasTime: !horizon && Boolean(parsed.dueTime),
       plannedFor,
       planUntil,
+      place: parsed.place,
+      origin: parsed.origin,
+      spot: parsed.spot,
+      amount: parsed.amount,
+      variableSymbol: parsed.variableSymbol,
       applyRules: options.applyRules,
       tagIds,
     }),
@@ -659,6 +752,31 @@ const FOLDER_CUE =
 
 const TAG_CUE =
   /(?<![\p{L}\p{N}])(?:hashtag(?:em|u)?|tag(?:em|u)?|stit(?:kem|ky|ku|ek))(?![\p{L}\p{N}])\s+/gu;
+
+function knownPerson(db: Db, name: string): string {
+  const people = alive(db.people);
+  const exact = people.find((person) => fold(person.name) === fold(name));
+  if (exact) return exact.name;
+  const keys = nameKeys(name);
+  let best: string | null = null;
+  let bestLen = 0;
+  for (const person of people) {
+    const have = fold(person.name).split(" ")[0] ?? "";
+    if (have.length < 3 || !keys.includes(have) || have.length <= bestLen)
+      continue;
+    best = person.name;
+    bestLen = have.length;
+  }
+  return best ?? name;
+}
+
+function nameKeys(name: string): string[] {
+  const key = fold(name.split(" ")[0] ?? "");
+  const keys = [key];
+  if (key.endsWith("ou") && key.length > 3) keys.push(`${key.slice(0, -2)}a`);
+  if (key.endsWith("em") && key.length > 3) keys.push(key.slice(0, -2));
+  return keys;
+}
 
 function followingWords(
   folded: string,

@@ -1,3 +1,5 @@
+import { storedAmount, storedSymbol } from "./dictate.ts";
+import { storedPlace } from "./place.ts";
 import type { ItemType, NewItem, Priority } from "./types.ts";
 
 export function newItem(init: {
@@ -14,6 +16,11 @@ export function newItem(init: {
   dueHasTime?: boolean;
   plannedFor?: string | null;
   planUntil?: string | null;
+  place?: string | null;
+  origin?: string | null;
+  spot?: string | null;
+  amount?: string | null;
+  variableSymbol?: string | null;
   parentItemId?: string | null;
   applyRules?: boolean;
   tagIds?: string[];
@@ -32,6 +39,11 @@ export function newItem(init: {
     dueHasTime: init.dueHasTime ?? false,
     plannedFor: init.plannedFor ?? null,
     planUntil: init.planUntil ?? null,
+    place: storedPlace(init.place),
+    origin: storedPlace(init.origin),
+    spot: storedPlace(init.spot),
+    amount: storedAmount(init.amount),
+    variableSymbol: storedSymbol(init.variableSymbol),
     parentItemId: init.parentItemId ?? null,
     applyRules: init.applyRules ?? true,
     tagIds: init.tagIds ?? [],

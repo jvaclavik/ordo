@@ -57,6 +57,8 @@ type Ui = {
   picked: string[];
   showDone: boolean;
   setShowDone: (value: boolean) => void;
+  showHidden: boolean;
+  setShowHidden: (value: boolean) => void;
   toggleInSelection: (id: string) => void;
   selectRange: (id: string, orderedIds: string[]) => void;
   clearPicked: () => void;
@@ -78,6 +80,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [showDone, setShowDone] = useState(readShowDone);
+  const [showHidden, setShowHiddenState] = useState(readShowHidden);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [editingBodyId, setEditingBodyId] = useState<string | null>(null);
 
@@ -133,6 +136,15 @@ export function UiProvider({ children }: { children: ReactNode }) {
         setShowDone(value);
         try {
           sessionStorage.setItem("ukoly-show-done", value ? "1" : "0");
+        } catch {
+          return;
+        }
+      },
+      showHidden,
+      setShowHidden: (value) => {
+        setShowHiddenState(value);
+        try {
+          sessionStorage.setItem("ukoly-show-hidden", value ? "1" : "0");
         } catch {
           return;
         }
@@ -198,6 +210,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     menuOpen,
     picked,
     showDone,
+    showHidden,
     toasts,
     editingBodyId,
   ]);
@@ -210,6 +223,14 @@ function readShowDone() {
     return sessionStorage.getItem("ukoly-show-done") !== "0";
   } catch {
     return true;
+  }
+}
+
+function readShowHidden() {
+  try {
+    return sessionStorage.getItem("ukoly-show-hidden") === "1";
+  } catch {
+    return false;
   }
 }
 

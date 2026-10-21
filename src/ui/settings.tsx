@@ -16,6 +16,7 @@ import { orderedRules } from "../domain/rules.ts";
 import { activeFolders } from "../domain/select.ts";
 import type { Ctx } from "../domain/types.ts";
 import { FolderPicker } from "./folderPick.tsx";
+import { GcalPanel } from "./gcal.tsx";
 import { loadDemo } from "./guide.tsx";
 import { useUi } from "./state.tsx";
 import { ThemeSwitch } from "./theme.tsx";
@@ -41,6 +42,7 @@ export function SettingsPage() {
         </p>
       </header>
       <SyncPanel />
+      <GcalPanel />
       <section className="grid gap-3">
         <h2 className="font-display text-2xl">Vzhled</h2>
         <ThemeSwitch labeled />
@@ -120,6 +122,7 @@ export function SettingsPage() {
           </li>
           <li>Shift nebo {modLabel} přidá další karty do výběru</li>
           <li>Delete přesune vybranou kartu do koše</li>
+          <li>Alt+H přepne zobrazení skrytých složek</li>
           <li>
             {modLabel}Z vrací poslední krok, Shift+{modLabel}Z ho zopakuje
           </li>

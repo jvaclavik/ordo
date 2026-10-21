@@ -34,6 +34,29 @@ export function childFolders(db: Db, parentId: string | null): Folder[] {
     .sort(byOrder);
 }
 
+export function folderConcealed(db: Db, folder: Folder): boolean {
+  let current: Folder | null = folder;
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    if (current.hidden === true) return true;
+    seen.add(current.id);
+    current = current.parentId
+      ? byId(db.folders, current.parentId) ?? null
+      : null;
+  }
+  return false;
+}
+
+export function shownChildFolders(
+  db: Db,
+  parentId: string | null,
+  showHidden: boolean
+): Folder[] {
+  return childFolders(db, parentId).filter(
+    (folder) => showHidden || !folderConcealed(db, folder)
+  );
+}
+
 export function folderTrail(db: Db, folderId: string | null): Folder[] {
   const trail: Folder[] = [];
   let current = byId(db.folders, folderId);

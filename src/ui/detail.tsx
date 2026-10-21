@@ -26,7 +26,9 @@ import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import { alive, byId, resolvedOpen, statusesOf } from "../domain/db.ts";
 import { fold } from "../domain/text.ts";
 import { newItem } from "../domain/factory.ts";
+import { emailsIn, linkPhones, phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
 import { priorityLabel } from "../domain/labels.ts";
+import { mapHref, routeHref } from "../domain/place.ts";
 import {
   recurrenceLabel,
   recurrenceOf,
@@ -47,6 +49,7 @@ import {
 import type { Item, RecurrenceFreq } from "../domain/types.ts";
 import { FolderCrumbs } from "./folders.tsx";
 import { FolderPicker } from "./folderPick.tsx";
+import { useTasksInGoogle } from "./gcal.tsx";
 import { downloadIcs, googleCalendarUrl } from "../lib/ics.ts";
 import { placeOp } from "./move.ts";
 import { useUi } from "./state.tsx";
@@ -76,6 +79,55 @@ const WEEK = [
   [6, "So"],
   [7, "Ne"],
 ] as const;
+
+function Removable({
+  children,
+  title,
+  onClear,
+}: {
+  children: ReactNode;
+  title: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded bg-ink/[0.06] px-2 py-0.5 text-sm">
+      {children}
+      <button
+        type="button"
+        title={title}
+        className="text-muted! hover:text-ink!"
+        onClick={onClear}
+      >
+        ×
+      </button>
+    </span>
+  );
+}
+
+function clearField(
+  id: string,
+  patch: {
+    origin?: null;
+    place?: null;
+    spot?: null;
+    amount?: null;
+    variableSymbol?: null;
+  }
+) {
+  dispatch({ type: "updateItem", id, patch });
+}
+
+function uniqueContacts(title: string, body: string | null) {
+  const text = `${title}\n${body ?? ""}`;
+  const seen = new Set<string>();
+  const take = <T extends { href: string }>(rows: T[]) =>
+    rows.filter((row) => {
+      if (seen.has(row.href)) return false;
+      seen.add(row.href);
+      return true;
+    });
+  return { phones: take(phonesIn(text)), emails: take(emailsIn(text)) };
+}
 
 function Fact({
   children,
@@ -325,6 +377,7 @@ function PriorityFields({ item }: { item: Item }) {
 export function Detail({ item }: { item: Item }) {
   const { db } = useSnap();
   const ui = useUi();
+  const inGoogle = useTasksInGoogle();
   const folder = byId(db.folders, item.folderId);
   const tags = tagsOf(db, item.id);
   const [extra, setExtra] = useState<string | null>(null);
@@ -481,6 +534,101 @@ export function Detail({ item }: { item: Item }) {
                 {person && (
                   <Fact onClick={() => toggle("person")}>{person.name}</Fact>
                 )}
+                {item.origin && (
+                  <Removable
+                    title="Odebrat start"
+                    onClear={() => clearField(item.id, { origin: null })}
+                  >
+                    {item.origin}
+                  </Removable>
+                )}
+                {item.place && (
+                  <Removable
+                    title="Odebrat destinaci"
+                    onClear={() => clearField(item.id, { place: null })}
+                  >
+                    <a
+                      href={mapHref(item.place)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Otevřít na mapě"
+                      className="hover:underline"
+                    >
+                      {item.place}
+                    </a>
+                    <a
+                      href={routeHref(item.place, item.origin)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Navigovat"
+                      className="hover:underline"
+                    >
+                      Trasa
+                    </a>
+                  </Removable>
+                )}
+                {item.spot && (
+                  <Removable
+                    title="Odebrat místo v budově"
+                    onClear={() => clearField(item.id, { spot: null })}
+                  >
+                    {item.spot}
+                  </Removable>
+                )}
+                {item.amount && (
+                  <Removable
+                    title="Odebrat částku"
+                    onClear={() => clearField(item.id, { amount: null })}
+                  >
+                    {item.amount}
+                  </Removable>
+                )}
+                {item.variableSymbol && (
+                  <Removable
+                    title="Odebrat variabilní symbol"
+                    onClear={() => clearField(item.id, { variableSymbol: null })}
+                  >
+                    VS {item.variableSymbol}
+                  </Removable>
+                )}
+                {uniqueContacts(item.title, item.body).phones.map((phone) => {
+                  const sms = smsHref(phone.value);
+                  const whatsApp = whatsAppHref(phone.value);
+                  return (
+                    <span
+                      key={phone.href}
+                      className="inline-flex items-center gap-2 rounded bg-ink/[0.06] px-2 py-0.5 text-sm"
+                    >
+                      <a href={phone.href} className="hover:underline">
+                        {phone.value}
+                      </a>
+                      {sms && (
+                        <a href={sms} className="hover:underline">
+                          SMS
+                        </a>
+                      )}
+                      {whatsApp && (
+                        <a
+                          href={whatsApp}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="hover:underline"
+                        >
+                          WhatsApp
+                        </a>
+                      )}
+                    </span>
+                  );
+                })}
+                {uniqueContacts(item.title, item.body).emails.map((email) => (
+                  <a
+                    key={email.href}
+                    href={email.href}
+                    className="rounded bg-ink/[0.06] px-2 py-0.5 text-sm hover:bg-ink/10"
+                  >
+                    {email.value}
+                  </a>
+                ))}
               </div>
               {extra && (
                 <div className="grid gap-2">
@@ -606,14 +754,16 @@ export function Detail({ item }: { item: Item }) {
                     <ActionButton onClick={() => downloadIcs(item)}>
                       <Calendar size={15} /> .ics
                     </ActionButton>
-                    <ActionButton
-                      onClick={() => {
-                        const url = googleCalendarUrl(item);
-                        if (url) window.open(url, "_blank", "noopener");
-                      }}
-                    >
-                      <Calendar size={15} /> Google
-                    </ActionButton>
+                    {!inGoogle && (
+                      <ActionButton
+                        onClick={() => {
+                          const url = googleCalendarUrl(item);
+                          if (url) window.open(url, "_blank", "noopener");
+                        }}
+                      >
+                        <Calendar size={15} /> Google
+                      </ActionButton>
+                    )}
                   </>
                 )}
                 <ActionButton
@@ -946,7 +1096,7 @@ function BodyEditor({
                 remarkPlugins={[remarkGfm]}
                 components={{ a: MarkdownLink }}
               >
-                {part.text}
+                {linkPhones(part.text)}
               </Markdown>
             )
           )}

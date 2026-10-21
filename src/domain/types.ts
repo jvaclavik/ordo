@@ -105,6 +105,7 @@ export type Folder = {
   openStatusId: string | null;
   closedStatusId: string | null;
   isArchived: boolean;
+  hidden: boolean;
   isDeleted: boolean;
   createdAt: string;
   updatedAt: string;
@@ -136,6 +137,11 @@ export type Item = {
   dueHasTime: boolean;
   plannedFor: string | null;
   planUntil: string | null;
+  place: string | null;
+  origin: string | null;
+  spot: string | null;
+  amount: string | null;
+  variableSymbol: string | null;
   parentItemId: string | null;
   seriesId: string | null;
   recurrenceFreq: RecurrenceFreq | null;
@@ -274,6 +280,7 @@ export type FolderPatch = {
   openStatusId?: string | null;
   closedStatusId?: string | null;
   isArchived?: boolean;
+  hidden?: boolean;
 };
 
 export type ItemPatch = {
@@ -286,6 +293,11 @@ export type ItemPatch = {
   dueHasTime?: boolean;
   plannedFor?: string | null;
   planUntil?: string | null;
+  place?: string | null;
+  origin?: string | null;
+  spot?: string | null;
+  amount?: string | null;
+  variableSymbol?: string | null;
   parentItemId?: string | null;
   sortOrder?: string;
   dayOrder?: string | null;
@@ -311,6 +323,11 @@ export type NewItem = {
   dueHasTime: boolean;
   plannedFor: string | null;
   planUntil: string | null;
+  place: string | null;
+  origin: string | null;
+  spot: string | null;
+  amount: string | null;
+  variableSymbol: string | null;
   parentItemId: string | null;
   sortOrder: string;
   applyRules: boolean;

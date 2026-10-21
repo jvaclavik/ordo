@@ -6,6 +6,7 @@ import { formatDay, todayKey } from "../domain/dates.ts";
 import { byId, inboxFolder, resolvedOpen } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
 import { splitNoteDraft } from "../domain/noteIntent.ts";
+import { mapHref, routeHref } from "../domain/place.ts";
 import {
   lineAt,
   opsFromTaskDraft,
@@ -383,6 +384,28 @@ export function QuickAdd() {
                 ×
               </button>
             ))}
+          {parsed.place && (
+            <>
+              <a
+                href={mapHref(parsed.place)}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-sm bg-accent-soft px-2 py-1 text-xs text-accent"
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                Mapa
+              </a>
+              <a
+                href={routeHref(parsed.place, parsed.origin)}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-sm bg-accent-soft px-2 py-1 text-xs text-accent"
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                Trasa
+              </a>
+            </>
+          )}
         </div>
       )}
       {kind === "task" && suggestions.length > 0 && (
@@ -427,7 +450,9 @@ export function QuickAdd() {
           <>
             {" · "}
             Složku najdeš lomítkem nebo slovem složka, štítek mřížkou, hashtagem
-            nebo štítkem. Čas třeba v 9 hodin. Šipky a Enter vyberou našeptanou.
+            nebo štítkem. Místo slovy na, do, v, z … do, nebo adresa. Částka
+            v Kč, člověk slovem s. Čas třeba v 9 hodin. Šipky a Enter vyberou
+            našeptanou.
           </>
         )}
         {kind === "note" && " · První řádek je název, zbytek text poznámky."}

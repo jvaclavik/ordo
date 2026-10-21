@@ -1,12 +1,17 @@
 import { generateKeyBetween } from "fractional-indexing";
 import { keyAtEnd } from "./ordering.ts";
+import { storedAmount, storedSymbol } from "./dictate.ts";
+import { storedPlace } from "./place.ts";
 import type { Ctx, Db, Folder, Item, Status, StatusMeaning } from "./types.ts";
 
 export function alive<T extends { isDeleted: boolean }>(rows: T[]): T[] {
   return rows.filter((row) => !row.isDeleted);
 }
 
-export function byId<T extends { id: string }>(rows: T[], id: string | null): T | null {
+export function byId<T extends { id: string }>(
+  rows: T[],
+  id: string | null
+): T | null {
   if (!id) return null;
   return rows.find((row) => row.id === id) ?? null;
 }
@@ -22,7 +27,9 @@ export function inboxFolder(db: Db): Folder | null {
 export function statusesOf(db: Db, folderId: string): Status[] {
   return alive(db.statuses)
     .filter((status) => status.folderId === folderId)
-    .sort((a, b) => (a.sortOrder < b.sortOrder ? -1 : a.sortOrder > b.sortOrder ? 1 : 0));
+    .sort((a, b) =>
+      a.sortOrder < b.sortOrder ? -1 : a.sortOrder > b.sortOrder ? 1 : 0
+    );
 }
 
 export function resolvedOpen(db: Db, folder: Folder): Status | null {
@@ -31,19 +38,26 @@ export function resolvedOpen(db: Db, folder: Folder): Status | null {
     const chosen = statuses.find((status) => status.id === folder.openStatusId);
     if (chosen) return chosen;
   }
-  return statuses.find((status) => status.meaning === "todo") ?? statuses[0] ?? null;
+  return (
+    statuses.find((status) => status.meaning === "todo") ?? statuses[0] ?? null
+  );
 }
 
 export function resolvedClosed(db: Db, folder: Folder): Status | null {
   const statuses = statusesOf(db, folder.id);
   if (folder.closedStatusId) {
-    const chosen = statuses.find((status) => status.id === folder.closedStatusId);
+    const chosen = statuses.find(
+      (status) => status.id === folder.closedStatusId
+    );
     if (chosen) return chosen;
   }
   return statuses.find((status) => status.meaning === "done") ?? null;
 }
 
-export function statusMeaning(db: Db, statusId: string | null): StatusMeaning | null {
+export function statusMeaning(
+  db: Db,
+  statusId: string | null
+): StatusMeaning | null {
   return byId(db.statuses, statusId)?.meaning ?? null;
 }
 
@@ -56,7 +70,11 @@ export function isClosedOut(db: Db, statusId: string | null): boolean {
   return meaning === "done" || meaning === "cancelled";
 }
 
-export function wouldFolderCycle(db: Db, folderId: string, parentId: string | null): boolean {
+export function wouldFolderCycle(
+  db: Db,
+  folderId: string,
+  parentId: string | null
+): boolean {
   let current = parentId;
   const seen = new Set<string>();
   while (current) {
@@ -81,7 +99,11 @@ export function descendantFolderIds(db: Db, rootId: string): string[] {
   return result;
 }
 
-export function wouldDependencyCycle(db: Db, itemId: string, dependsOnId: string): boolean {
+export function wouldDependencyCycle(
+  db: Db,
+  itemId: string,
+  dependsOnId: string
+): boolean {
   if (itemId === dependsOnId) return true;
   const edges = new Map<string, string[]>();
   for (const dependency of alive(db.dependencies)) {
@@ -101,7 +123,11 @@ export function wouldDependencyCycle(db: Db, itemId: string, dependsOnId: string
   return false;
 }
 
-export function sortKeyForStatus(db: Db, folderId: string, statusId: string | null): string {
+export function sortKeyForStatus(
+  db: Db,
+  folderId: string,
+  statusId: string | null
+): string {
   const keys = alive(db.items)
     .filter((item) => item.folderId === folderId && item.statusId === statusId)
     .map((item) => item.sortOrder);
@@ -135,10 +161,23 @@ export function bootstrap(ctx: Ctx): Db {
   const first = generateKeyBetween(null, null);
   const second = generateKeyBetween(first, null);
   const third = generateKeyBetween(second, null);
-  const stamp = { createdAt: now, updatedAt: now, isDeleted: false, workspaceId: workspace };
+  const stamp = {
+    createdAt: now,
+    updatedAt: now,
+    isDeleted: false,
+    workspaceId: workspace,
+  };
   return {
     ...emptyDb(),
-    workspaces: [{ id: workspace, name: "Osobní", createdAt: now, updatedAt: now, isDeleted: false }],
+    workspaces: [
+      {
+        id: workspace,
+        name: "Osobní",
+        createdAt: now,
+        updatedAt: now,
+        isDeleted: false,
+      },
+    ],
     folders: [
       {
         ...stamp,
@@ -155,12 +194,34 @@ export function bootstrap(ctx: Ctx): Db {
         openStatusId: null,
         closedStatusId: null,
         isArchived: false,
+        hidden: false,
       },
     ],
     statuses: [
-      { ...stamp, id: todo, folderId: inbox, name: "K udělání", meaning: "todo", sortOrder: first },
-      { ...stamp, id: doing, folderId: inbox, name: "Dělám", meaning: "doing", sortOrder: second },
-      { ...stamp, id: done, folderId: inbox, name: "Hotovo", meaning: "done", sortOrder: third },
+      {
+        ...stamp,
+        id: todo,
+        folderId: inbox,
+        name: "K udělání",
+        meaning: "todo",
+        sortOrder: first,
+      },
+      {
+        ...stamp,
+        id: doing,
+        folderId: inbox,
+        name: "Dělám",
+        meaning: "doing",
+        sortOrder: second,
+      },
+      {
+        ...stamp,
+        id: done,
+        folderId: inbox,
+        name: "Hotovo",
+        meaning: "done",
+        sortOrder: third,
+      },
     ],
   };
 }
@@ -180,13 +241,28 @@ export function withPlan(db: Db): Db {
     ...omitKeys(db, ["shoppingTemplates"]),
     folders: db.folders.map((folder) => ({
       ...folder,
-      itemSort: folder.itemSort === "priority" || folder.itemSort === "created" ? folder.itemSort : null,
+      hidden: folder.hidden === true,
+      itemSort:
+        folder.itemSort === "priority" || folder.itemSort === "created"
+          ? folder.itemSort
+          : null,
     })),
     items: db.items.map((item) =>
-      omitKeys(
-        { ...item, planUntil: item.planUntil ?? null },
-        ["store", "quantity", "unit", "spec", "templateId"]
-      )
+      omitKeys({
+        ...item,
+        planUntil: item.planUntil ?? null,
+        place: storedPlace(item.place),
+        origin: storedPlace(item.origin),
+        spot: storedPlace(item.spot),
+        amount: storedAmount(item.amount),
+        variableSymbol: storedSymbol(item.variableSymbol),
+      }, [
+        "store",
+        "quantity",
+        "unit",
+        "spec",
+        "templateId",
+      ])
     ),
     rules: db.rules.map((rule) => omitKeys(rule, ["actionStore"])),
     savedViews: db.savedViews.map((view) => ({

@@ -27,10 +27,10 @@ import {
 import { byId, descendantFolderIds, statusesOf } from "../domain/db.ts";
 import { viewLabel } from "../domain/labels.ts";
 import {
-  childFolders,
   folderTrail,
   inboxWaitingCount,
   openTaskCount,
+  shownChildFolders,
 } from "../domain/select.ts";
 import {
   FOLDER_COLOR_LABELS,
@@ -243,6 +243,23 @@ function FolderMenu({ folder }: { folder: Folder }) {
             <button
               type="button"
               role="menuitem"
+              className="block w-full rounded-lg px-3 py-1.5 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
+              onClick={() => {
+                setOpen(false);
+                dispatch({
+                  type: "updateFolder",
+                  id: folder.id,
+                  patch: { hidden: !folder.hidden },
+                });
+              }}
+            >
+              {folder.hidden ? "Zrušit skrytí" : "Skrýt"}
+            </button>
+          )}
+          {folder.system !== "inbox" && (
+            <button
+              type="button"
+              role="menuitem"
               className="block w-full rounded-lg px-3 py-1.5 text-left text-sm hover:bg-danger/10"
               onClick={() => {
                 setOpen(false);
@@ -304,7 +321,8 @@ export function FolderTree({
   scope?: string;
 }) {
   const { db } = useSnap();
-  const folders = childFolders(db, parentId);
+  const ui = useUi();
+  const folders = shownChildFolders(db, parentId, ui.showHidden);
   const tree = (
     <div
       className="min-w-0"
@@ -340,7 +358,7 @@ function FolderNode({
   const [location] = useLocation();
   const tree = useTreeOpen();
   const open = tree.isOpen(folder.id, depth);
-  const children = childFolders(db, folder.id);
+  const children = shownChildFolders(db, folder.id, ui.showHidden);
   const movable = folder.system !== "inbox";
   const drag = useDraggable({
     id: `folder:${folder.id}`,
@@ -455,7 +473,9 @@ function FolderNode({
           }}
         >
           <Dot color={folder.color} icon={folder.icon} />
-          <span className="truncate">{folder.name}</span>
+          <span className={cx("truncate", folder.hidden && "text-muted")}>
+            {folder.name}
+          </span>
           {(waiting || (children.length === 0 && count > 0)) && (
             <span
               title={waiting ? "Ještě čeká na zařazení" : undefined}
@@ -487,7 +507,8 @@ function FolderNode({
 
 export function FolderChildren({ parentId }: { parentId: string }) {
   const { db } = useSnap();
-  const folders = childFolders(db, parentId);
+  const ui = useUi();
+  const folders = shownChildFolders(db, parentId, ui.showHidden);
   if (folders.length === 0) return null;
   return (
     <TreeOpenProvider openRoots={false}>
@@ -522,7 +543,8 @@ function PageFolderRow({
   const [location] = useLocation();
   const tree = useTreeOpen();
   const open = tree.isOpen(folder.id, depth);
-  const children = childFolders(db, folder.id);
+  const ui = useUi();
+  const children = shownChildFolders(db, folder.id, ui.showHidden);
   const drag = useDraggable({
     id: `page-folder:${folder.id}`,
     data: { kind: "folder", folderId: folder.id },
@@ -618,7 +640,14 @@ function PageFolderRow({
           }}
         >
           <Dot color={folder.color} icon={folder.icon} />
-          <span className="min-w-0 flex-1 truncate">{folder.name}</span>
+          <span
+            className={cx(
+              "min-w-0 flex-1 truncate",
+              folder.hidden && "text-muted"
+            )}
+          >
+            {folder.name}
+          </span>
           {count > 0 && <span className="text-xs text-muted">{count}</span>}
         </Link>
       </div>
@@ -1158,6 +1187,19 @@ export function FolderDialog() {
           <Button tone="solid" data-primary onClick={save}>
             {folder ? "Uložit" : "Vytvořit"}
           </Button>
+          {folder && folder.system !== "inbox" && (
+            <Button
+              onClick={() =>
+                dispatch({
+                  type: "updateFolder",
+                  id: folder.id,
+                  patch: { hidden: !folder.hidden },
+                })
+              }
+            >
+              {folder.hidden ? "Zrušit skrytí" : "Skrýt"}
+            </Button>
+          )}
           {folder && folder.system !== "inbox" && (
             <Button
               onClick={() =>
