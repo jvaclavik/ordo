@@ -37,13 +37,13 @@ import { pullHashtags, removeToken } from "../domain/hashtags.ts";
 import { whenLabel } from "../domain/horizon.ts";
 import { priorityLabel } from "../domain/labels.ts";
 import { phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
-import { mapHref, routeHref } from "../domain/place.ts";
 import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
   indentOutline,
   nestOutline,
   outdentOutline,
 } from "../domain/outline.ts";
+import { mapHref, routeHref } from "../domain/place.ts";
 import {
   opsFromTaskDraft,
   suggestTags,
@@ -143,12 +143,14 @@ export function ItemTitle({
   className,
   struck = false,
   truncate = true,
+  clamp = false,
   dragClick,
 }: {
   item: Item;
   className?: string;
   struck?: boolean;
   truncate?: boolean;
+  clamp?: boolean;
   dragClick?: () => boolean;
 }) {
   const { db } = useSnap();
@@ -212,8 +214,12 @@ export function ItemTitle({
     ]);
   };
   const frame = cx(
-    "block min-w-0",
-    editing || truncate ? "truncate" : "break-words whitespace-normal",
+    "min-w-0",
+    editing || truncate
+      ? "block truncate"
+      : clamp
+      ? "line-clamp-2"
+      : "block break-words whitespace-normal",
     struck && "text-muted line-through",
     className
   );
@@ -844,12 +850,10 @@ export function FolderHint({ item }: { item: Item }) {
 export function TaskRow({
   item,
   showFolder = false,
-  striped = false,
   depth = 0,
 }: {
   item: Item;
   showFolder?: boolean;
-  striped?: boolean;
   depth?: number;
 }) {
   const { db } = useSnap();
@@ -894,12 +898,10 @@ export function TaskRow({
         paddingLeft: 12 + depth * 20,
       }}
       className={cx(
-        "group flex cursor-grab items-center gap-3 rounded-md px-3 py-2 active:cursor-grabbing",
+        "group flex cursor-grab items-start gap-0.5 rounded-lg pr-1 active:cursor-grabbing",
         itemMarked(ui.picked, ui.selectedId, item.id)
-          ? "bg-accent/25"
-          : striped
-          ? "bg-black/[0.03] hover:bg-black/5 dark:bg-white/[0.04] dark:hover:bg-white/10"
-          : "hover:bg-black/5 dark:hover:bg-white/10",
+          ? "bg-accent/20"
+          : "hover:bg-black/[0.04] dark:hover:bg-white/[0.05]",
         isDragging && "opacity-0"
       )}
       {...attributes}
@@ -918,7 +920,7 @@ export function TaskRow({
       }}
     >
       <label
-        className="grid size-11 shrink-0 -my-2 place-items-center"
+        className="grid size-11 shrink-0 place-items-center"
         onPointerDown={keepControl}
         onMouseDown={keepControl}
         onTouchStart={keepControl}
@@ -933,13 +935,14 @@ export function TaskRow({
         />
       </label>
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <div className="w-full min-w-0 py-0.5 text-left">
+        <div className="w-full min-w-0 pt-2.5 pb-2 text-left">
           <div className="flex w-full min-w-0 items-center gap-1.5">
             <ItemTitle
               item={item}
               struck={checked}
               dragClick={dragClick}
               truncate={false}
+              clamp
               className="min-w-0 flex-1 leading-6"
             />
           </div>
@@ -987,9 +990,7 @@ export function TaskRow({
               </span>
             )}
             {middle && status && (
-              <span className="rounded-sm bg-accent-soft px-1.5 text-accent">
-                {status.name}
-              </span>
+              <span className="text-accent">{status.name}</span>
             )}
             {when && (
               <span className={overdue ? "text-danger" : ""}>{when}</span>
@@ -1015,7 +1016,11 @@ export function TaskRow({
           </span>
         </div>
       </div>
-      {item.type === "task" && <PriorityNudge item={item} />}
+      {item.type === "task" && (
+        <span className="mt-0.5">
+          <PriorityNudge item={item} />
+        </span>
+      )}
     </div>
   );
 }
@@ -1696,12 +1701,11 @@ export function ItemList({
       strategy={verticalListSortingStrategy}
     >
       <div className="grid gap-0.5" data-task-list="">
-        {rows.map((row, index) => (
+        {rows.map((row) => (
           <TaskRow
             key={row.item.id}
             item={row.item}
             showFolder={showFolder}
-            striped={index % 2 === 1}
             depth={row.depth}
           />
         ))}
@@ -1787,11 +1791,10 @@ export function DescendantLists({ folders }: { folders: Folder[] }) {
               strategy={verticalListSortingStrategy}
             >
               <div data-task-list="">
-                {rows.map((row, index) => (
+                {rows.map((row) => (
                   <TaskRow
                     key={row.item.id}
                     item={row.item}
-                    striped={index % 2 === 1}
                     depth={row.depth}
                   />
                 ))}

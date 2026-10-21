@@ -273,7 +273,7 @@ function RecentTasks() {
   if (items.length === 0) return null;
   return (
     <section className="mb-8">
-      <h2 className="mb-2 font-display text-2xl">Poslední úkoly</h2>
+      <h2 className="mb-1 px-1 text-sm text-muted">Poslední úkoly</h2>
       <ItemList items={items} showFolder />
     </section>
   );
@@ -288,14 +288,8 @@ function HomeTree({ today }: { today: string }) {
   }
   return (
     <div>
-      {folders.map((folder, index) => (
-        <HomeFolder
-          key={folder.id}
-          folder={folder}
-          depth={0}
-          today={today}
-          stripe={index % 2 === 1}
-        />
+      {folders.map((folder) => (
+        <HomeFolder key={folder.id} folder={folder} depth={0} today={today} />
       ))}
     </div>
   );
@@ -305,12 +299,10 @@ function HomeFolder({
   folder,
   depth,
   today,
-  stripe,
 }: {
   folder: Folder;
   depth: number;
   today: string;
-  stripe: boolean;
 }) {
   const { db } = useSnap();
   const ui = useUi();
@@ -343,16 +335,13 @@ function HomeFolder({
   return (
     <div>
       <div
-        className={cx(
-          "flex items-center gap-2 rounded-md py-2 pr-3 hover:bg-black/5 dark:hover:bg-white/10",
-          stripe && "bg-black/[0.03] dark:bg-white/[0.04]"
-        )}
+        className="flex items-center gap-2 rounded-md py-1.5 pr-2 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
         style={{ paddingLeft: treePad(depth) }}
       >
         {children.length > 0 ? (
           <button
             type="button"
-            className="grid size-5 shrink-0 place-items-center rounded-md text-muted hover:bg-black/10 hover:text-ink dark:hover:bg-white/15"
+            className="grid size-5 shrink-0 place-items-center rounded-md text-muted! hover:bg-black/10 hover:text-ink! dark:hover:bg-white/15"
             aria-expanded={open}
             aria-label={open ? "Sbalit" : "Rozbalit"}
             onClick={() => setOpen((value) => !value)}
@@ -395,20 +384,19 @@ function HomeFolder({
             )}
           </span>
           {tasks.length > 0 && (
-            <span className="rounded-sm bg-black/5 px-1.5 text-xs text-muted dark:bg-white/10">
+            <span className="text-xs tabular-nums text-muted">
               {tasks.length}
             </span>
           )}
         </Link>
       </div>
       {open &&
-        children.map((child, index) => (
+        children.map((child) => (
           <HomeFolder
             key={child.id}
             folder={child}
             depth={depth + 1}
             today={today}
-            stripe={index % 2 === 1}
           />
         ))}
     </div>
@@ -440,7 +428,7 @@ export function TodayPage() {
       <GcalNote />
       {events.length > 0 && (
         <section className="mb-5">
-          <h2 className="mb-2 font-display text-2xl">V kalendáři</h2>
+          <h2 className="mb-1 px-1 text-sm text-muted">V kalendáři</h2>
           <GcalDayEvents events={events} day={today} />
         </section>
       )}
@@ -449,7 +437,7 @@ export function TodayPage() {
       )}
       {sections.map((section) => (
         <section key={section.id} className="mb-5">
-          <h2 className="mb-2 font-display text-2xl">
+          <h2 className="mb-1 px-1 text-sm text-muted">
             {FOCUS_TITLE[section.id]}
           </h2>
           <ItemList items={section.items} showFolder />

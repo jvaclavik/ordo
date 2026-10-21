@@ -21,18 +21,23 @@ import {
 } from "../domain/dates.ts";
 import { byId, inboxFolder, resolvedOpen } from "../domain/db.ts";
 import { planOnDay } from "../domain/horizon.ts";
-import { keyBetween } from "../domain/ordering.ts";
 import type { Op } from "../domain/op.ts";
+import { keyBetween } from "../domain/ordering.ts";
 import { opsFromTaskDraft, parseQuickAdd } from "../domain/quickAdd.ts";
-import { folderTrail, isChecked, isOpenItem, suggestFolders } from "../domain/select.ts";
+import {
+  folderTrail,
+  isChecked,
+  isOpenItem,
+  suggestFolders,
+} from "../domain/select.ts";
 import type { Item, NewItem, Priority } from "../domain/types.ts";
 import { eventCount, eventsOnDay, type CalEvent } from "../lib/gcalEvents.ts";
-import { registerDraftFolderUndo } from "./draftFolder.ts";
 import { DictateButton } from "./dictate.tsx";
+import { registerDraftFolderUndo } from "./draftFolder.ts";
 import { FolderGlyph } from "./folders.tsx";
 import { GcalDayEvents, GcalNote } from "./gcal.tsx";
-import { useUi } from "./state.tsx";
 import { placeCreated } from "./move.ts";
+import { useUi } from "./state.tsx";
 import { clickItem, FolderHint, itemMarked, toggleComplete } from "./tasks.tsx";
 import {
   Button,
@@ -89,7 +94,8 @@ function automaticDayRank(
   const openRank = Number(!open(left)) - Number(!open(right));
   if (openRank !== 0) return openRank;
   const dueRank =
-    Number(dayKind(left, day) !== "due") - Number(dayKind(right, day) !== "due");
+    Number(dayKind(left, day) !== "due") -
+    Number(dayKind(right, day) !== "due");
   if (dueRank !== 0) return dueRank;
   const leftTime =
     dayKind(left, day) === "due" ? dueTime(left.dueAt, left.dueHasTime) : null;
@@ -241,21 +247,24 @@ export function CalendarBoard({
         <IconButton label="Předchozí měsíc" onClick={() => shiftMonth(-1)}>
           <ChevronLeft size={18} />
         </IconButton>
-        <h2 className="min-w-0 flex-1 text-center font-display text-2xl capitalize">
+        <h2 className="min-w-0 flex-1 truncate text-center font-display text-xl capitalize">
           {label}
         </h2>
-        <Button
-          tone={picked === today ? "ghost" : "soft"}
-          onClick={() => {
-            setMonth(today.slice(0, 7));
-            setPicked(today);
-          }}
-        >
-          Dnes
-        </Button>
         <IconButton label="Další měsíc" onClick={() => shiftMonth(1)}>
           <ChevronRight size={18} />
         </IconButton>
+        {picked !== today && (
+          <button
+            type="button"
+            className="ml-1 shrink-0 text-sm text-muted! hover:text-ink!"
+            onClick={() => {
+              setMonth(today.slice(0, 7));
+              setPicked(today);
+            }}
+          >
+            Dnes
+          </button>
+        )}
       </div>
       {external && <GcalNote />}
       {overdue.length > 0 && <Overdue items={overdue} today={today} />}
@@ -296,7 +305,7 @@ export function CalendarBoard({
           )}
         </div>
       </div>
-      <section className="rounded-xl border border-line bg-panel px-3 py-3">
+      <section className="px-1 pt-1">
         <div className="mb-2 flex items-baseline justify-between gap-3">
           <h3 className="font-display text-xl">{dayTitle(picked)}</h3>
           <span className="text-sm text-muted">
@@ -336,10 +345,8 @@ function columnWash(index: number) {
 const CHIP_LIMIT = 3;
 
 function chipTone(item: Item, kind: "due" | "plan", done: boolean) {
-  if (done)
-    return "bg-black/[0.04] text-muted line-through dark:bg-white/[0.06]";
-  if (kind === "plan")
-    return "border border-dashed border-line bg-black/[0.03] text-ink dark:bg-white/[0.05]";
+  if (done) return "text-muted line-through";
+  if (kind === "plan") return "text-muted";
   const edge =
     item.priority === "urgent"
       ? "border-l-danger"
@@ -348,7 +355,7 @@ function chipTone(item: Item, kind: "due" | "plan", done: boolean) {
       : item.priority === "low"
       ? "border-l-muted"
       : "border-l-accent";
-  return cx("border-l-2 bg-black/[0.04] text-ink dark:bg-white/[0.08]", edge);
+  return cx("border-l-2 text-ink", edge);
 }
 
 function dotTone(item: Item, kind: "due" | "plan", done: boolean) {
@@ -410,7 +417,7 @@ function DayCell({
       className={cx(
         cellFrame(index, total),
         "flex h-full min-w-0 flex-col items-stretch justify-start overflow-hidden text-left",
-        drop.isOver || active
+        drop.isOver || (active && day !== today)
           ? "bg-accent-soft"
           : weekend
           ? "bg-black/[0.045] hover:bg-black/[0.07] dark:bg-white/[0.04] dark:hover:bg-white/[0.07]"
@@ -429,9 +436,7 @@ function DayCell({
           {Number(day.slice(-2))}
         </span>
         {count > 1 && (
-          <span className="text-[11px] tabular-nums text-muted">
-            {count}
-          </span>
+          <span className="text-[11px] tabular-nums text-muted">{count}</span>
         )}
       </span>
       {count > 0 && (
@@ -611,83 +616,83 @@ function DayComposer({
   };
   return (
     <div className="mt-1">
-    <div className="flex items-start gap-1 pr-1">
-      <span className="grid size-9 shrink-0 place-items-center text-muted">
-        <Plus size={16} />
-      </span>
-      <textarea
-        ref={ref}
-        rows={1}
-        aria-label="Nový úkol"
-        placeholder="Nový úkol…"
-        className="block min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent py-2 outline-none placeholder:text-muted"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            skip.current = true;
-            setDraft("");
-            setFolderOverride(null);
-            event.currentTarget.blur();
-            return;
-          }
-          if (
-            event.key !== "Enter" ||
-            event.shiftKey ||
-            event.altKey ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.nativeEvent.isComposing
-          )
-            return;
-          event.preventDefault();
-          commit();
-        }}
-        onBlur={(event) => {
-          if (
-            event.relatedTarget instanceof Element &&
-            event.relatedTarget.closest(
-              "[data-dictate], [data-folder-suggest], [data-history-undo]"
+      <div className="flex items-start gap-1 pr-1">
+        <span className="grid size-9 shrink-0 place-items-center text-muted">
+          <Plus size={16} />
+        </span>
+        <textarea
+          ref={ref}
+          rows={1}
+          aria-label="Nový úkol"
+          placeholder="Nový úkol…"
+          className="block min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent py-2 outline-none placeholder:text-muted"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              skip.current = true;
+              setDraft("");
+              setFolderOverride(null);
+              event.currentTarget.blur();
+              return;
+            }
+            if (
+              event.key !== "Enter" ||
+              event.shiftKey ||
+              event.altKey ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.nativeEvent.isComposing
             )
-          )
-            return;
-          if (skip.current) {
-            skip.current = false;
-            return;
-          }
-          commit();
-        }}
-      />
-      <DictateButton value={draft} onChange={setDraft} />
-    </div>
-    {suggestions.length > 0 && (
-      <div className="mt-1 flex flex-wrap gap-1 pl-10">
-        {suggestions.map((folder) => {
-          const selected = folderOverride === folder.id;
-          return (
-            <Button
-              key={folder.id}
-              tone={selected ? "solid" : "ghost"}
-              aria-pressed={selected}
-              data-folder-suggest=""
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() =>
-                setFolderOverride((current) =>
-                  current === folder.id ? null : folder.id
-                )
-              }
-            >
-              {selected && <Check size={14} />}
-              {folderTrail(db, folder.id)
-                .map((part) => part.name)
-                .join(" / ")}
-            </Button>
-          );
-        })}
+              return;
+            event.preventDefault();
+            commit();
+          }}
+          onBlur={(event) => {
+            if (
+              event.relatedTarget instanceof Element &&
+              event.relatedTarget.closest(
+                "[data-dictate], [data-folder-suggest], [data-history-undo]"
+              )
+            )
+              return;
+            if (skip.current) {
+              skip.current = false;
+              return;
+            }
+            commit();
+          }}
+        />
+        <DictateButton value={draft} onChange={setDraft} />
       </div>
-    )}
+      {suggestions.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1 pl-10">
+          {suggestions.map((folder) => {
+            const selected = folderOverride === folder.id;
+            return (
+              <Button
+                key={folder.id}
+                tone={selected ? "solid" : "ghost"}
+                aria-pressed={selected}
+                data-folder-suggest=""
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  setFolderOverride((current) =>
+                    current === folder.id ? null : folder.id
+                  )
+                }
+              >
+                {selected && <Check size={14} />}
+                {folderTrail(db, folder.id)
+                  .map((part) => part.name)
+                  .join(" / ")}
+              </Button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -714,7 +719,13 @@ function DayItems({
     >
       <div className="grid gap-0.5" data-calendar-list="">
         {items.map((item) => (
-          <DayItem key={item.id} item={item} day={day} today={today} showTime={showTime} />
+          <DayItem
+            key={item.id}
+            item={item}
+            day={day}
+            today={today}
+            showTime={showTime}
+          />
         ))}
       </div>
     </SortableContext>
@@ -754,11 +765,17 @@ function DayItem({
 }) {
   const { db } = useSnap();
   const ui = useUi();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({
-      id: `item:${item.id}`,
-      data: { kind: "item", itemId: item.id, calendarDay: day },
-    });
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `item:${item.id}`,
+    data: { kind: "item", itemId: item.id, calendarDay: day },
+  });
   const dragClick = useDragGuard(isDragging);
   const kind = dayKind(item, day);
   const time = kind === "due" ? dueTime(item.dueAt, item.dueHasTime) : null;
