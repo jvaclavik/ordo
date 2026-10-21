@@ -1,18 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { byId, inboxFolder, resolvedClosed, resolvedOpen } from "../domain/db.ts";
+import {
+  byId,
+  inboxFolder,
+  resolvedClosed,
+  resolvedOpen,
+} from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
+import { reminderDays } from "../domain/horizon.ts";
 import type { Op } from "../domain/op.ts";
 import { freshDb, reduce } from "../domain/reduce.ts";
 import type { Ctx, Db } from "../domain/types.ts";
 import { eventIdFor, type ApiSyncEvent } from "./gcalPush.ts";
-import { emptyPushState, syncOnce, type PushDeps, type PushState } from "./gcalPushRun.ts";
+import {
+  emptyPushState,
+  syncOnce,
+  type PushDeps,
+  type PushState,
+} from "./gcalPushRun.ts";
 import { GoogleError, type GoogleApi } from "./googleErrors.ts";
 
 const TODAY = "2026-10-16";
 
 type Stored = ApiSyncEvent & { version: number };
 
-function merge(target: Record<string, unknown>, patch: Record<string, unknown>) {
+function merge(
+  target: Record<string, unknown>,
+  patch: Record<string, unknown>
+) {
   for (const [key, value] of Object.entries(patch)) {
     if (value === null) delete target[key];
     else if (typeof value === "object" && !Array.isArray(value)) {
@@ -30,7 +44,10 @@ function merge(target: Record<string, unknown>, patch: Record<string, unknown>) 
 // semantics, soft deletes and incremental sync tokens.
 class FakeGoogle {
   clock = Date.parse("2026-10-16T09:00:00.000Z");
-  calendars = new Map<string, { description: string; events: Map<string, Stored> }>();
+  calendars = new Map<
+    string,
+    { description: string; events: Map<string, Stored> }
+  >();
   version = 0;
   writes = 0;
   created = 0;
@@ -70,7 +87,7 @@ class FakeGoogle {
     this.touch(event);
   }
 
-  api: GoogleApi = async <T,>(
+  api: GoogleApi = async <T>(
     method: string,
     path: string,
     options: { params?: Record<string, string>; body?: unknown } = {}
@@ -78,16 +95,24 @@ class FakeGoogle {
     const body = (options.body ?? {}) as Record<string, unknown>;
     if (path === "/users/me/calendarList")
       return {
-        items: [...this.calendars].map(([id, calendar]) => ({ id, description: calendar.description })),
+        items: [...this.calendars].map(([id, calendar]) => ({
+          id,
+          description: calendar.description,
+        })),
       } as T;
     if (path === "/calendars" && method === "POST") {
       this.created += 1;
       const id = `cal${this.created}`;
-      this.calendars.set(id, { description: String(body.description ?? ""), events: new Map() });
+      this.calendars.set(id, {
+        description: String(body.description ?? ""),
+        events: new Map(),
+      });
       return { id } as T;
     }
     const match = path.match(/^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/);
-    const calendar = match ? this.calendars.get(decodeURIComponent(match[1] ?? "")) : undefined;
+    const calendar = match
+      ? this.calendars.get(decodeURIComponent(match[1] ?? ""))
+      : undefined;
     if (!match || !calendar) throw new GoogleError(404, false);
     const eventId = match[2] ? decodeURIComponent(match[2]) : null;
     if (method === "GET") {
@@ -101,14 +126,22 @@ class FakeGoogle {
     if (method === "POST") {
       const id = String(body.id);
       if (calendar.events.has(id)) throw new GoogleError(409, false);
-      const event = { ...structuredClone(body), status: "confirmed", version: 0 } as Stored;
+      const event = {
+        ...structuredClone(body),
+        status: "confirmed",
+        version: 0,
+      } as Stored;
       this.touch(event);
       calendar.events.set(id, event);
       return structuredClone(event) as T;
     }
     const existing = eventId ? calendar.events.get(eventId) : undefined;
     if (!existing) throw new GoogleError(404, false);
-    if (method === "PATCH") merge(existing as unknown as Record<string, unknown>, structuredClone(body));
+    if (method === "PATCH")
+      merge(
+        existing as unknown as Record<string, unknown>,
+        structuredClone(body)
+      );
     if (method === "DELETE") existing.status = "cancelled";
     this.touch(existing);
     return (method === "DELETE" ? null : structuredClone(existing)) as T;
@@ -128,11 +161,34 @@ function setup() {
   const open = resolvedOpen(db, inbox)?.id ?? null;
   const done = resolvedClosed(db, inbox)?.id ?? "";
   for (const item of [
-    newItem({ id: "dentist", folderId: inbox.id, title: "Zubař", statusId: open, dueAt: "2026-10-20T09:00", dueHasTime: true }),
-    newItem({ id: "trip", folderId: inbox.id, title: "Chata", statusId: open, plannedFor: "2026-10-23", planUntil: "2026-10-25" }),
-    newItem({ id: "someday", folderId: inbox.id, title: "Jednou", statusId: open }),
+    newItem({
+      id: "dentist",
+      folderId: inbox.id,
+      title: "Zubař",
+      statusId: open,
+      dueAt: "2026-10-20T09:00",
+      dueHasTime: true,
+    }),
+    newItem({
+      id: "trip",
+      folderId: inbox.id,
+      title: "Chata",
+      statusId: open,
+      plannedFor: "2026-10-23",
+      planUntil: "2026-10-25",
+    }),
+    newItem({
+      id: "someday",
+      folderId: inbox.id,
+      title: "Jednou",
+      statusId: open,
+    }),
   ])
-    db = reduce(db, { type: "createItem", item }, { ...ctx(), now: "2026-10-16T08:00:00.000Z" });
+    db = reduce(
+      db,
+      { type: "createItem", item },
+      { ...ctx(), now: "2026-10-16T08:00:00.000Z" }
+    );
   const edit = (op: Op) => {
     google.stamp();
     db = reduce(db, op, ctx());
@@ -170,7 +226,11 @@ function setup() {
   };
 }
 
-async function settles(run: () => Promise<unknown>, google: FakeGoogle, db: () => Db) {
+async function settles(
+  run: () => Promise<unknown>,
+  google: FakeGoogle,
+  db: () => Db
+) {
   const writes = google.writes;
   const before = db();
   await run();
@@ -224,16 +284,28 @@ describe("Google Calendar sync against a fake Google", () => {
     expect(task?.dueAt).toBe("2026-10-22T14:30");
     expect(task?.dueHasTime).toBe(true);
     await settles(phone.sync, world.google, () => world.db);
-    world.edit({ type: "updateItem", id: "dentist", patch: { dueAt: "2026-10-23T08:00" } });
+    world.edit({
+      type: "updateItem",
+      id: "dentist",
+      patch: { dueAt: "2026-10-23T08:00" },
+    });
     await phone.sync();
-    expect(world.google.event("dentist").end?.dateTime).toBe("2026-10-23T08:45:00");
+    expect(world.google.event("dentist").end?.dateTime).toBe(
+      "2026-10-23T08:45:00"
+    );
   });
 
   it("marks done tasks and removes deleted ones", async () => {
     const world = setup();
     const phone = world.device();
     await phone.sync();
-    world.edit({ type: "placeItem", id: "dentist", folderId: world.inboxId, statusId: world.done, sortOrder: "a0" });
+    world.edit({
+      type: "placeItem",
+      id: "dentist",
+      folderId: world.inboxId,
+      statusId: world.done,
+      sortOrder: "a0",
+    });
     world.edit({ type: "deleteItem", id: "trip" });
     await phone.sync();
     expect(world.google.event("dentist").summary).toBe("✓ Zubař");
@@ -283,8 +355,79 @@ describe("Google Calendar sync against a fake Google", () => {
     const laptop = world.device();
     await settles(laptop.sync, world.google, () => world.db);
     expect(laptop.state.calendarId).toBe("cal1");
-    world.edit({ type: "updateItem", id: "trip", patch: { title: "Chata u Lipna" } });
+    world.edit({
+      type: "updateItem",
+      id: "trip",
+      patch: { title: "Chata u Lipna" },
+    });
     await laptop.sync();
     expect(world.google.event("trip").summary).toBe("Chata u Lipna");
+  });
+
+  it("writes reminder days for a long plan and drops the later ones when it is done", async () => {
+    const world = setup();
+    const open = byId(world.db.items, "dentist")?.statusId ?? null;
+    world.edit({
+      type: "createItem",
+      item: newItem({
+        id: "gift",
+        folderId: world.inboxId,
+        title: "Dárek",
+        statusId: open,
+        plannedFor: "2026-10-01",
+        planUntil: "2026-12-31",
+      }),
+    });
+    const phone = world.device();
+    await phone.sync();
+    const days = reminderDays("2026-10-01", "2026-12-31", null).filter(
+      (day) => day >= TODAY
+    );
+    for (const day of days) {
+      const event = world.google.only().get(eventIdFor("gift", day));
+      expect(event?.status).toBe("confirmed");
+      expect(event?.summary).toBe(
+        day === "2026-12-31" ? "Poslední připomínka: Dárek" : "Dárek"
+      );
+    }
+    expect(world.google.only().has(eventIdFor("gift"))).toBe(false);
+    world.edit({
+      type: "placeItem",
+      id: "gift",
+      folderId: world.inboxId,
+      statusId: world.done,
+      sortOrder: "a0",
+    });
+    await phone.sync();
+    for (const day of days.filter((day) => day > TODAY))
+      expect(world.google.only().get(eventIdFor("gift", day))?.status).toBe(
+        "cancelled"
+      );
+    await settles(phone.sync, world.google, () => world.db);
+  });
+
+  it("raises an open long plan to urgent on its last day", async () => {
+    const world = setup();
+    const open = byId(world.db.items, "dentist")?.statusId ?? null;
+    world.edit({
+      type: "createItem",
+      item: newItem({
+        id: "last",
+        folderId: world.inboxId,
+        title: "Uzavřít",
+        statusId: open,
+        plannedFor: "2026-09-01",
+        planUntil: TODAY,
+      }),
+    });
+    await world.device().sync();
+    expect(byId(world.db.items, "last")?.priority).toBe("urgent");
+    const event = world.google.only().get(eventIdFor("last", TODAY));
+    expect(event?.summary).toBe("Poslední připomínka: Uzavřít");
+    expect(event?.colorId).toBe("11");
+    const reminders = [...world.google.only().keys()].filter((id) =>
+      id.startsWith(eventIdFor("last"))
+    );
+    expect(reminders).toEqual([eventIdFor("last", TODAY)]);
   });
 });

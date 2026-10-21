@@ -3,11 +3,18 @@ import { nanoid } from "nanoid";
 import { useSyncExternalStore } from "react";
 import { todayKey } from "../domain/dates.ts";
 import { isValidDb, withPlan } from "../domain/db.ts";
+import { needsLastReminderUrgent } from "../domain/horizon.ts";
 import type { Op } from "../domain/op.ts";
 import { freshDb, reduce } from "../domain/reduce.ts";
+import { isOpenItem } from "../domain/select.ts";
 import type { Ctx, Db } from "../domain/types.ts";
 import { noteLocal, startSync } from "./sync.ts";
-import { collapseInboxes, fingerprint, isUntouched, mergeLatest } from "./syncMap.ts";
+import {
+  collapseInboxes,
+  fingerprint,
+  isUntouched,
+  mergeLatest,
+} from "./syncMap.ts";
 
 export type Snap = {
   ready: boolean;
@@ -121,10 +128,28 @@ function flushPersist() {
   noteLocal(snap.db);
 }
 
+function promoteLastReminders() {
+  if (!snap.ready) return;
+  const today = todayKey();
+  const ops: Op[] = [];
+  for (const item of snap.db.items) {
+    if (!isOpenItem(snap.db, item) || !needsLastReminderUrgent(item, today))
+      continue;
+    ops.push({
+      type: "updateItem",
+      id: item.id,
+      patch: { priority: "urgent" },
+    });
+  }
+  if (ops.length > 0) dispatch({ type: "batch", ops });
+}
+
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", flushPersist);
+  window.addEventListener("focus", promoteLastReminders);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushPersist();
+    else promoteLastReminders();
   });
 }
 
@@ -173,11 +198,13 @@ export function loadStore() {
             const merged = isUntouched(snap.db)
               ? incoming
               : collapseInboxes(mergeLatest(incoming, snap.db));
-            if (fingerprint(merged) !== fingerprint(incoming)) noteLocal(merged);
+            if (fingerprint(merged) !== fingerprint(incoming))
+              noteLocal(merged);
             if (fingerprint(merged) === fingerprint(snap.db)) return;
             snap = { ...snap, db: merged, past: [], future: [] };
             emit();
             void persist();
+            promoteLastReminders();
           }
         );
       } catch (error) {
@@ -190,11 +217,13 @@ export function loadStore() {
         };
         emit();
       }
+      promoteLastReminders();
       return;
     } catch {
       snap = { ...snap, ready: true, memoryOnly: true, db: freshDb(runtime()) };
     }
     emit();
+    promoteLastReminders();
   })();
   return loading;
 }

@@ -246,7 +246,7 @@ export function focusSections(
       overdue.push(item);
       continue;
     }
-    if (due === today || planIsDue(item.plannedFor, item.planUntil, today)) {
+    if (due === today || planIsDue(item.plannedFor, item.planUntil, today, item.priority)) {
       dueToday.push(item);
       continue;
     }

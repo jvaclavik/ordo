@@ -8,6 +8,7 @@ import {
   isoWeekday,
   parseDateKey,
 } from "./dates.ts";
+import type { Item, Priority } from "./types.ts";
 
 export type Horizon = {
   from: string;
@@ -154,27 +155,74 @@ export function planLabel(
   return `${formatDay(from, today)} – ${formatDay(until, today)}`;
 }
 
+export function planEnd(from: string, until: string | null | undefined): string {
+  return until && until > from ? until : from;
+}
+
+export function isLongPlan(from: string | null, until: string | null | undefined): boolean {
+  if (!from) return false;
+  return inclusiveDays(from, planEnd(from, until)) > 7;
+}
+
+export function reminderCount(priority: Priority | null): number {
+  if (priority === "low") return 2;
+  if (priority === "high") return 4;
+  if (priority === "urgent") return 6;
+  return 3;
+}
+
+// Long plans are not one block. A handful of days, always including the last
+// one, never denser than every other day. Short plans return nothing here.
+export function reminderDays(
+  from: string,
+  until: string | null | undefined,
+  priority: Priority | null
+): string[] {
+  const end = planEnd(from, until);
+  const span = inclusiveDays(from, end);
+  if (span <= 7) return [];
+  const count = Math.min(reminderCount(priority), Math.floor((span + 1) / 2), span);
+  const days: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const offset = count === 1 ? span - 1 : Math.round((index * (span - 1)) / (count - 1));
+    const day = addDays(from, offset);
+    if (days.at(-1) !== day) days.push(day);
+  }
+  if (days.at(-1) !== end) days.push(end);
+  return days;
+}
+
+export function needsLastReminderUrgent(item: Item, today: string): boolean {
+  if (item.type !== "task" || item.isDeleted || item.isArchived || item.dueAt) return false;
+  if (item.priority === "urgent" || !item.plannedFor) return false;
+  if (!isLongPlan(item.plannedFor, item.planUntil)) return false;
+  return today >= planEnd(item.plannedFor, item.planUntil);
+}
+
 export function planIsDue(
   from: string | null,
   until: string | null | undefined,
-  today: string
+  today: string,
+  priority: Priority | null = null
 ): boolean {
   if (!from || from > today) return false;
-  const end = until && until > from ? until : from;
+  const end = planEnd(from, until);
   if (today > end || from === end) return true;
-  if (inclusiveDays(from, end) <= 7) return true;
-  return inclusiveDays(today, end) <= 7;
+  if (!isLongPlan(from, until)) return true;
+  return reminderDays(from, until, priority).includes(today);
 }
 
 export function planOnDay(
   from: string | null,
   until: string | null | undefined,
-  day: string
+  day: string,
+  priority: Priority | null = null
 ): boolean {
   if (!from) return false;
-  const end = until && until > from ? until : from;
+  const end = planEnd(from, until);
   if (day < from || day > end) return false;
-  return from === end || inclusiveDays(from, end) <= 7;
+  if (!isLongPlan(from, until)) return true;
+  return reminderDays(from, until, priority).includes(day);
 }
 
 function namedSpan(from: string, until: string, today: string): string | null {

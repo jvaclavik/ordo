@@ -65,7 +65,7 @@ export function itemsOnDay(items: Item[], day: string): Item[] {
   return items.filter(
     (item) =>
       dueDateKey(item.dueAt) === day ||
-      planOnDay(item.plannedFor, item.planUntil, day)
+      planOnDay(item.plannedFor, item.planUntil, day, item.priority)
   );
 }
 

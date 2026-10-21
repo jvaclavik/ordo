@@ -1,7 +1,9 @@
 // One sync pass between Ordo and its Google calendar. Everything with side
 // effects comes in through `deps`, so tests can run it against a fake Google.
 import { byId } from "../domain/db.ts";
+import { needsLastReminderUrgent } from "../domain/horizon.ts";
 import type { Op } from "../domain/op.ts";
+import { isOpenItem } from "../domain/select.ts";
 import type { Db, Item } from "../domain/types.ts";
 import {
   baseOf,
@@ -168,23 +170,38 @@ function record(state: PushState, raw: ApiSyncEvent | null, item: Item, db: Db) 
   delete state.tombstones[mirror.eventId];
 }
 
-function payload(state: PushState, deps: PushDeps, db: Db, item: Item, create: boolean) {
+function payload(
+  state: PushState,
+  deps: PushDeps,
+  db: Db,
+  item: Item,
+  eventId: string | undefined,
+  create: boolean
+) {
   return eventPayload(db, item, {
     timeZone: deps.timeZone,
-    minutes: state.mirrors[eventIdFor(item.id)]?.minutes ?? null,
+    minutes: state.mirrors[eventId ?? eventIdFor(item.id)]?.minutes ?? null,
     create,
     origin: create ? deps.origin : null,
+    ...(eventId ? { eventId } : {}),
   });
 }
 
-async function createEvent(state: PushState, deps: PushDeps, calendarId: string, item: Item, db: Db) {
-  const body = payload(state, deps, db, item, true);
+async function createEvent(
+  state: PushState,
+  deps: PushDeps,
+  calendarId: string,
+  item: Item,
+  db: Db,
+  eventId: string | undefined
+) {
+  const body = payload(state, deps, db, item, eventId, true);
   if (!body) return;
   try {
     record(state, await deps.api<ApiSyncEvent>("POST", `${calendarPath(calendarId)}/events`, { body }), item, db);
   } catch (error) {
     if (!(error instanceof GoogleError) || error.status !== 409) throw error;
-    await patchEvent(state, deps, calendarId, eventIdFor(item.id), item, db);
+    await patchEvent(state, deps, calendarId, eventId ?? eventIdFor(item.id), item, db);
   }
 }
 
@@ -196,17 +213,17 @@ async function patchEvent(
   item: Item,
   db: Db
 ) {
-  const body = payload(state, deps, db, item, false);
+  const body = payload(state, deps, db, item, eventId, false);
   if (!body) return;
   try {
     record(state, await deps.api<ApiSyncEvent>("PATCH", eventPath(calendarId, eventId), { body }), item, db);
   } catch (error) {
-    if (!gone(error) || eventId !== eventIdFor(item.id)) throw error;
+    if (!gone(error)) throw error;
     delete state.mirrors[eventId];
     record(
       state,
       await deps.api<ApiSyncEvent>("POST", `${calendarPath(calendarId)}/events`, {
-        body: payload(state, deps, db, item, true),
+        body: payload(state, deps, db, item, eventId, true),
       }),
       item,
       db
@@ -234,7 +251,11 @@ async function deleteEvent(
       updated: new Date(deps.now()).toISOString(),
     };
   state.tombstones[eventId] = deps.now();
-  if (itemId) delete state.bases[itemId];
+  if (!itemId) return;
+  const others = Object.values(state.mirrors).some(
+    (mirror) => mirror.ordoId === itemId && mirror.eventId !== eventId && !mirror.cancelled
+  );
+  if (!others) delete state.bases[itemId];
 }
 
 async function write(state: PushState, deps: PushDeps, calendarId: string, action: Action) {
@@ -246,7 +267,7 @@ async function write(state: PushState, deps: PushDeps, calendarId: string, actio
   const db = deps.getDb();
   const item = byId(db.items, action.itemId);
   if (!item || !belongsInCalendar(db, item)) return;
-  if (action.kind === "create") await createEvent(state, deps, calendarId, item, db);
+  if (action.kind === "create") await createEvent(state, deps, calendarId, item, db, action.eventId);
   else await patchEvent(state, deps, calendarId, action.eventId, item, db);
 }
 
@@ -308,6 +329,16 @@ function isWrite(action: Action): boolean {
   return action.kind === "create" || action.kind === "update" || action.kind === "delete";
 }
 
+function promoteLastReminders(deps: PushDeps) {
+  const db = deps.getDb();
+  const ops: Op[] = [];
+  for (const item of db.items) {
+    if (!isOpenItem(db, item) || !needsLastReminderUrgent(item, deps.today)) continue;
+    ops.push({ type: "updateItem", id: item.id, patch: { priority: "urgent" } });
+  }
+  if (ops.length > 0) deps.dispatch({ type: "batch", ops });
+}
+
 export async function syncOnce(state: PushState, deps: PushDeps): Promise<PushResult> {
   let calendarId = await ensureCalendar(state, deps);
   try {
@@ -320,6 +351,7 @@ export async function syncOnce(state: PushState, deps: PushDeps): Promise<PushRe
     calendarId = await ensureCalendar(state, deps);
     await pullChanges(state, deps, calendarId);
   }
+  promoteLastReminders(deps);
   const db = deps.getDb();
   const actions = planSync({
     db,
