@@ -15,8 +15,6 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { showOtherCalendars, useGcalMonth } from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
@@ -31,8 +29,6 @@ import {
 } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
 import { viewLabel } from "../domain/labels.ts";
-import { linkPhones } from "../domain/links.ts";
-import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import { splitNoteDraft, takeNoteIntent } from "../domain/noteIntent.ts";
 import { keyAtStart } from "../domain/ordering.ts";
 import { opsFromTaskLines, parseQuickAdd } from "../domain/quickAdd.ts";
@@ -76,7 +72,7 @@ import {
 } from "./folders.tsx";
 import { GcalDayEvents, GcalNote } from "./gcal.tsx";
 import { loadDemo } from "./guide.tsx";
-import { MarkdownLink } from "./links.tsx";
+import { MarkdownField, type MarkdownHandle } from "./markdownField.tsx";
 import { useUi } from "./state.tsx";
 import { BoardView, ItemList, ListView } from "./tasks.tsx";
 import {
@@ -625,63 +621,13 @@ function noteSource(note: { title: string; body: string | null }) {
   return `${note.title}\n${body}`;
 }
 
-function splitTasks(body: string) {
-  const parts: Array<
-    { kind: "text"; text: string } | { kind: "task"; id: string }
-  > = [];
-  const pattern = /\{\{task:([A-Za-z0-9_-]+)\}\}/g;
-  let cursor = 0;
-  for (const match of body.matchAll(pattern)) {
-    const index = match.index ?? 0;
-    if (index > cursor)
-      parts.push({ kind: "text", text: body.slice(cursor, index) });
-    parts.push({ kind: "task", id: match[1] ?? "" });
-    cursor = index + match[0].length;
-  }
-  if (cursor < body.length)
-    parts.push({ kind: "text", text: body.slice(cursor) });
-  return parts.filter((part) => part.kind === "task" || part.text.trim());
-}
-
-function Heading({ children }: { children?: ReactNode }) {
-  return <div className="font-semibold">{children}</div>;
-}
-
-function NoteMarkdown({ source }: { source: string }) {
+function NoteTask({ id }: { id: string }) {
   const { db } = useSnap();
-  const parts = splitTasks(source);
-  if (parts.length === 0) return null;
   return (
-    <div className="note-md">
-      {parts.map((part, index) =>
-        part.kind === "task" ? (
-          <p key={part.id} className="text-sm text-muted">
-            {byId(db.items, part.id)?.title ?? "Úkol už tu není."}
-          </p>
-        ) : (
-          <Markdown
-            key={index}
-            remarkPlugins={[remarkGfm]}
-            components={{
-              h1: Heading,
-              h2: Heading,
-              h3: Heading,
-              h4: Heading,
-              a: MarkdownLink,
-            }}
-          >
-            {linkPhones(part.text)}
-          </Markdown>
-        )
-      )}
-    </div>
+    <p className="text-sm text-muted">
+      {byId(db.items, id)?.title ?? "Úkol už tu není."}
+    </p>
   );
-}
-
-function growField(node: HTMLTextAreaElement | null) {
-  if (!node) return;
-  node.style.height = "0px";
-  node.style.height = `${node.scrollHeight}px`;
 }
 
 function noteParts(value: string) {
@@ -702,11 +648,15 @@ function NoteRead({ source }: { source: string }) {
   return (
     <div className="grid gap-1">
       {heading.trim() && (
-        <h2 className="font-display text-xl leading-tight break-words">
-          {heading}
-        </h2>
+        <div className="note-title break-words">{heading}</div>
       )}
-      {body.trim() && <NoteMarkdown source={body} />}
+      {body.trim() && (
+        <MarkdownField
+          value={body}
+          editable={false}
+          embed={(id) => <NoteTask id={id} />}
+        />
+      )}
     </div>
   );
 }
@@ -724,35 +674,33 @@ function NoteField({
 }) {
   const start = noteParts(value);
   const titleRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const bodyRef = useRef<MarkdownHandle>(null);
+  const titleValue = useRef(start.title);
+  const bodyValue = useRef(start.body);
   const skip = useRef(false);
   const done = useRef(false);
-  const cursor = useRef<number | null>(null);
   const [title, setTitle] = useState(start.title);
   const [body, setBody] = useState(start.body);
-  useLayoutEffect(() => {
-    const node = bodyRef.current;
-    growField(node);
-    if (!node || cursor.current == null) return;
-    node.selectionStart = node.selectionEnd = cursor.current;
-    cursor.current = null;
-  });
   const finish = (next: string | null) => {
     if (done.current) return;
     done.current = true;
     onDone(next);
   };
+  const textNow = () => noteText(titleValue.current, bodyValue.current);
   return (
     <div className="grid gap-1">
-      <div className="font-display text-xl leading-tight">
+      <div>
         <input
           ref={titleRef}
           autoFocus={autoFocus}
           aria-label={label}
           placeholder="Nadpis"
-          className="block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
+          className="note-title block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            titleValue.current = event.target.value;
+            setTitle(event.target.value);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
@@ -760,54 +708,63 @@ function NoteField({
               event.currentTarget.blur();
               return;
             }
-            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            if (event.nativeEvent.isComposing) return;
+            if (
+              event.key === "ArrowDown" &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !event.metaKey &&
+              !event.ctrlKey
+            ) {
+              event.preventDefault();
+              bodyRef.current?.focus(event.currentTarget.selectionStart ?? 0);
+              return;
+            }
+            if (event.key !== "Enter") return;
             event.preventDefault();
             bodyRef.current?.focus();
           }}
-          onBlur={(event) => {
-            const next = event.relatedTarget;
-            if (next instanceof Node && bodyRef.current === next) return;
-            finish(skip.current ? null : noteText(title, body));
+          onBlur={() => {
+            window.setTimeout(() => {
+              const active = document.activeElement;
+              const box = titleRef.current?.closest(".grid");
+              if (active instanceof Node && box?.contains(active)) return;
+              finish(skip.current ? null : textNow());
+            }, 0);
           }}
         />
       </div>
-      <textarea
+      <MarkdownField
         ref={bodyRef}
-        aria-label="Text poznámky"
-        rows={1}
-        className="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-base leading-6 outline-none"
         value={body}
-        onChange={(event) => setBody(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            skip.current = true;
-            event.currentTarget.blur();
-            return;
-          }
-          if (
-            event.key !== "Enter" ||
-            event.shiftKey ||
-            event.altKey ||
-            event.metaKey ||
-            event.ctrlKey
-          )
-            return;
-          if (event.nativeEvent.isComposing) return;
-          const next = continueMarkdownList(
-            event.currentTarget.value,
-            event.currentTarget.selectionStart,
-            event.currentTarget.selectionEnd
-          );
-          if (!next) return;
-          event.preventDefault();
-          cursor.current = next.cursor;
-          setBody(next.value);
+        label="Text poznámky"
+        placeholder="Text…"
+        onChange={(next) => {
+          bodyValue.current = next;
+          setBody(next);
         }}
-        onBlur={(event) => {
-          const next = event.relatedTarget;
-          if (next instanceof Node && titleRef.current === next) return;
-          finish(skip.current ? null : noteText(title, body));
+        onEscape={() => {
+          skip.current = true;
+        }}
+        embed={(id) => <NoteTask id={id} />}
+        onExit={(dir, column) => {
+          if (dir > 0) return;
+          const input = titleRef.current;
+          if (!input) return;
+          const at = Math.min(column, input.value.length);
+          input.focus();
+          input.setSelectionRange(at, at);
+        }}
+        onBlur={() => {
+          window.setTimeout(() => {
+            const active = document.activeElement;
+            if (
+              active instanceof Node &&
+              titleRef.current?.closest(".grid")?.contains(active)
+            )
+              return;
+            finish(skip.current ? null : textNow());
+          }, 0);
         }}
       />
     </div>
@@ -925,37 +882,36 @@ function NoteComposer({
   onCommit: (text: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<MarkdownHandle>(null);
+  const titleValue = useRef("");
+  const bodyValue = useRef("");
+  const committed = useRef<string | null>(null);
   const skip = useRef(false);
-  const sent = useRef(false);
-  const cursor = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  useLayoutEffect(() => {
-    const node = bodyRef.current;
-    growField(node);
-    if (!node || cursor.current == null) return;
-    node.selectionStart = node.selectionEnd = cursor.current;
-    cursor.current = null;
-  });
   const commit = () => {
-    if (sent.current || skip.current) return;
-    const text = noteText(title, body);
+    if (skip.current) return;
+    const text = noteText(titleValue.current, bodyValue.current);
+    if (committed.current === text) return;
     if (!splitNoteDraft(text)) return;
-    sent.current = true;
+    committed.current = text;
+    titleValue.current = "";
+    bodyValue.current = "";
     setTitle("");
     setBody("");
     onCommit(text);
-    sent.current = false;
   };
-  const leave = (event: { relatedTarget: EventTarget | null }) => {
-    const next = event.relatedTarget;
-    if (next instanceof Node && box.current?.contains(next)) return;
-    if (skip.current) {
-      skip.current = false;
-      return;
-    }
-    commit();
+  const leave = () => {
+    window.setTimeout(() => {
+      const active = document.activeElement;
+      if (active instanceof Node && box.current?.contains(active)) return;
+      if (skip.current) {
+        skip.current = false;
+        return;
+      }
+      commit();
+    }, 0);
   };
   return (
     <div
@@ -975,15 +931,20 @@ function NoteComposer({
         style={{ background: "#e6cf7c" }}
       />
       <div className="grid gap-1">
-        <div className="font-display text-xl leading-tight">
+        <div>
           <input
+            ref={titleRef}
             autoFocus
             aria-label="Nadpis"
             placeholder="Nadpis"
             data-note-composer=""
-            className="block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
+            className="note-title block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
             value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            onChange={(event) => {
+              committed.current = null;
+              titleValue.current = event.target.value;
+              setTitle(event.target.value);
+            }}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
@@ -993,49 +954,49 @@ function NoteComposer({
                 event.currentTarget.blur();
                 return;
               }
-              if (event.key !== "Enter" || event.nativeEvent.isComposing)
+              if (event.nativeEvent.isComposing) return;
+              if (
+                event.key === "ArrowDown" &&
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.metaKey &&
+                !event.ctrlKey
+              ) {
+                event.preventDefault();
+                bodyRef.current?.focus(event.currentTarget.selectionStart ?? 0);
                 return;
+              }
+              if (event.key !== "Enter") return;
               event.preventDefault();
               bodyRef.current?.focus();
             }}
             onBlur={leave}
           />
         </div>
-        <textarea
+        <MarkdownField
           ref={bodyRef}
-          aria-label="Text poznámky"
-          placeholder="Text…"
-          rows={1}
-          className="block min-h-16 w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-base leading-6 outline-none placeholder:text-[#6d6456]"
           value={body}
-          onChange={(event) => setBody(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              skip.current = true;
-              setTitle("");
-              setBody("");
-              event.currentTarget.blur();
-              return;
-            }
-            if (
-              event.key !== "Enter" ||
-              event.shiftKey ||
-              event.altKey ||
-              event.metaKey ||
-              event.ctrlKey
-            )
-              return;
-            if (event.nativeEvent.isComposing) return;
-            const next = continueMarkdownList(
-              event.currentTarget.value,
-              event.currentTarget.selectionStart,
-              event.currentTarget.selectionEnd
-            );
-            if (!next) return;
-            event.preventDefault();
-            cursor.current = next.cursor;
-            setBody(next.value);
+          label="Text poznámky"
+          placeholder="Text…"
+          className="min-h-16"
+          onChange={(next) => {
+            committed.current = null;
+            bodyValue.current = next;
+            setBody(next);
+          }}
+          onEscape={() => {
+            skip.current = true;
+            setTitle("");
+            setBody("");
+          }}
+          embed={(id) => <NoteTask id={id} />}
+          onExit={(dir, column) => {
+            if (dir > 0) return;
+            const input = titleRef.current;
+            if (!input) return;
+            const at = Math.min(column, input.value.length);
+            input.focus();
+            input.setSelectionRange(at, at);
           }}
           onBlur={leave}
         />
@@ -1104,7 +1065,9 @@ function StickyCard({
     const target = event.target;
     if (
       target instanceof Element &&
-      target.closest("a, textarea, input, button, [data-resize]")
+      target.closest(
+        "a, textarea, input, button, [contenteditable='true'], [data-resize]"
+      )
     )
       return;
     origin.current = { px: event.clientX, py: event.clientY, x: left, y: top };
@@ -1186,7 +1149,9 @@ function StickyCard({
         const target = event.target;
         if (
           target instanceof Element &&
-          target.closest("a, textarea, input, button, [data-resize]")
+          target.closest(
+            "a, textarea, input, button, [contenteditable='true'], [data-resize]"
+          )
         )
           return;
         setEditing(true);

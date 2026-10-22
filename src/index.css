@@ -174,8 +174,12 @@ h3 {
   letter-spacing: -0.02em;
 }
 
-.font-display :is(input, textarea) {
-  letter-spacing: normal;
+.note-title {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
 }
 
 input[type="checkbox"] {
@@ -222,7 +226,8 @@ button:disabled {
 
 input:focus-visible,
 textarea:focus-visible,
-select:focus-visible {
+select:focus-visible,
+[contenteditable]:focus-visible {
   outline: none;
 }
 
@@ -339,9 +344,32 @@ select[data-meaning="cancelled"] {
 }
 
 .note-md :where(h1, h2, h3, h4) {
-  font-size: 1em;
   font-weight: 600;
   line-height: 1.35;
+}
+
+.note-md h1 { font-size: 1.25rem; }
+.note-md h2 { font-size: 1.125rem; }
+.note-md :where(h3, h4) { font-size: 1rem; }
+
+.md-doc.note-md :where(blockquote, pre) {
+  margin: 0;
+}
+
+.md-line[data-empty="1"] {
+  position: relative;
+}
+
+.md-line[data-empty="1"][data-placeholder]:not([data-placeholder=""])::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
+  position: absolute;
+  inset: 0 auto auto 0;
+}
+
+.sticky-note .md-line[data-empty="1"][data-placeholder]:not([data-placeholder=""])::before {
+  color: #6d6456;
 }
 
 .note-md :where(ul, ol) {

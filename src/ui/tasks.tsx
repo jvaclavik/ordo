@@ -37,7 +37,6 @@ import { pullHashtags, removeToken } from "../domain/hashtags.ts";
 import { whenLabel } from "../domain/horizon.ts";
 import { priorityLabel } from "../domain/labels.ts";
 import { phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
-import { continueMarkdownList } from "../domain/markdownEdit.ts";
 import {
   indentOutline,
   nestOutline,
@@ -71,6 +70,7 @@ import type {
 import { useBoardSlot } from "./boardDrop.ts";
 import { DictateButton } from "./dictate.tsx";
 import { LinkedText } from "./links.tsx";
+import { MarkdownField } from "./markdownField.tsx";
 import { completionOps, placeOp } from "./move.ts";
 import { useUi, type ConfirmState } from "./state.tsx";
 import { dispatchTaskText, TagMenu, useTagHint } from "./tagHint.tsx";
@@ -314,43 +314,17 @@ export function ItemTitle({
   );
 }
 
-function bodyPreview(body: string | null): string {
-  if (!body) return "";
-  return body
-    .replace(/\{\{task:[A-Za-z0-9_-]+\}\}/g, " ")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
   const { db } = useSnap();
   const ui = useUi();
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const anchor = useRef<HTMLElement | null>(null);
   const skip = useRef(false);
-  const cursor = useRef<number | null>(null);
-  const placed = useRef(false);
   const closed = useRef(false);
   const [draft, setDraft] = useState(item.body ?? "");
   const [caret, setCaret] = useState((item.body ?? "").length);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const hint = useTagHint(item.type === "task" ? draft : "", caret);
-  useLayoutEffect(() => {
-    const node = ref.current;
-    if (!node) return;
-    node.style.height = "0px";
-    node.style.height = `${node.scrollHeight}px`;
-    if (!placed.current) {
-      placed.current = true;
-      node.focus();
-      const end = node.value.length;
-      node.selectionStart = node.selectionEnd = end;
-    }
-    if (cursor.current == null) return;
-    node.selectionStart = node.selectionEnd = cursor.current;
-    cursor.current = null;
-  });
   const pickTag = (name: string) => {
     if (!hint.token) return;
     const cleaned = removeToken(
@@ -359,14 +333,11 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
       hint.token.end
     );
     const body = cleaned.trim() ? cleaned.replace(/\s+$/, "") : null;
-    const nextCaret = Math.min(hint.token.start, cleaned.length);
-    cursor.current = nextCaret;
-    setCaret(nextCaret);
+    setCaret(Math.min(hint.token.start, cleaned.length));
     setDraft(cleaned);
     dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, [
       name,
     ]);
-    ref.current?.focus();
   };
   const finish = (save: boolean) => {
     if (closed.current) return;
@@ -399,72 +370,45 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
     );
   };
   return (
-    <div className="text-sm leading-5 text-muted">
-      <textarea
-        ref={ref}
-        data-task-body=""
-        aria-label="Popis"
-        rows={1}
-        placeholder="Popis…"
-        className={cx(
-          "mt-0.5 block w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-sm leading-5 outline-none placeholder:text-muted",
-          struck && "line-through"
-        )}
+    <div
+      className={cx("text-sm leading-5 text-muted", struck && "line-through")}
+      onPointerDown={keepControl}
+      onMouseDown={keepControl}
+      onClick={keepControl}
+      onKeyDownCapture={(event) => {
+        const key = hint.onKey(event);
+        if (!key.handled) return;
+        if (key.name) pickTag(key.name);
+      }}
+    >
+      <MarkdownField
         value={draft}
-        onPointerDown={keepControl}
-        onMouseDown={keepControl}
-        onClick={keepControl}
-        onChange={(event) => {
-          setDraft(event.target.value);
-          setCaret(event.target.selectionStart ?? event.target.value.length);
+        label="Popis"
+        placeholder="Popis…"
+        autoFocus
+        caret={caret}
+        density="inline"
+        taskBody
+        onCaret={(at, node) => {
+          anchor.current = node;
+          setCaret(at);
         }}
-        onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
-        onKeyDown={(event) => {
-          const key = hint.onKey(event);
-          if (key.handled) {
-            if (key.name) pickTag(key.name);
-            return;
-          }
-          if (event.key === "Escape") {
-            event.preventDefault();
-            event.stopPropagation();
-            skip.current = true;
-            finish(false);
-            return;
-          }
-          if (
-            event.key !== "Enter" ||
-            event.shiftKey ||
-            event.altKey ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.nativeEvent.isComposing
-          )
-            return;
-          const next = continueMarkdownList(
-            event.currentTarget.value,
-            event.currentTarget.selectionStart,
-            event.currentTarget.selectionEnd
-          );
-          if (!next) return;
-          event.preventDefault();
-          cursor.current = next.cursor;
-          setCaret(next.cursor);
-          setDraft(next.value);
+        onChange={(next, at) => {
+          draftRef.current = next;
+          setDraft(next);
+          setCaret(at);
+        }}
+        onEscape={() => {
+          skip.current = true;
         }}
         onBlur={() => {
           const save = !skip.current;
           skip.current = false;
-          const node = ref.current;
           window.setTimeout(() => {
             const active = document.activeElement;
             if (active instanceof Element && active.closest("[role=listbox]"))
               return;
-            if (node?.isConnected && active === node) return;
-            if (
-              !node?.isConnected &&
-              document.querySelector("[data-task-body]")
-            )
+            if (active instanceof Element && active.closest("[data-task-body]"))
               return;
             finish(save);
           }, 0);
@@ -472,7 +416,7 @@ function TaskBodyEditor({ item, struck }: { item: Item; struck: boolean }) {
       />
       {hint.open && (
         <TagMenu
-          anchor={ref.current}
+          anchor={anchor.current}
           tags={hint.tags}
           picked={hint.picked}
           onHover={hint.setHighlight}
@@ -885,7 +829,7 @@ export function TaskRow({
   const blocked = blockingItems(db, item.id).length > 0;
   const children = subtasksOf(db, item.id);
   const repeat = recurrenceLabel(item);
-  const preview = bodyPreview(item.body);
+  const preview = item.body?.trim() ?? "";
 
   const toggle = () => toggleComplete(db, item, ui.askConfirm);
 
@@ -950,9 +894,9 @@ export function TaskRow({
             <TaskBodyEditor item={item} struck={checked} />
           ) : (
             preview && (
-              <p
+              <div
                 className={cx(
-                  "mt-0.5 line-clamp-2 cursor-text text-sm leading-5 text-muted",
+                  "mt-0.5 cursor-text text-sm leading-5 text-muted",
                   checked && "line-through"
                 )}
                 onPointerDown={keepControl}
@@ -962,8 +906,12 @@ export function TaskRow({
                   ui.editBody(item.id);
                 }}
               >
-                {preview}
-              </p>
+                <MarkdownField
+                  value={item.body ?? ""}
+                  editable={false}
+                  density="inline"
+                />
+              </div>
             )
           )}
           <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">

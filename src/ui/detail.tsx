@@ -14,21 +14,29 @@ import {
   X,
 } from "lucide-react";
 import { nanoid } from "nanoid";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { dispatch, useSnap } from "../data/store.tsx";
-import { combineDue, dueChoices, dueDateKey, isoWeekday, todayKey } from "../domain/dates.ts";
-import { horizonPresets, planLabel, whenLabel } from "../domain/horizon.ts";
-import { parseQuickAdd } from "../domain/quickAdd.ts";
-import { pullHashtags, removeToken } from "../domain/hashtags.ts";
-import { continueMarkdownList } from "../domain/markdownEdit.ts";
+import {
+  combineDue,
+  dueChoices,
+  dueDateKey,
+  isoWeekday,
+  todayKey,
+} from "../domain/dates.ts";
 import { alive, byId, resolvedOpen, statusesOf } from "../domain/db.ts";
-import { fold } from "../domain/text.ts";
 import { newItem } from "../domain/factory.ts";
-import { emailsIn, linkPhones, phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
+import { pullHashtags, removeToken } from "../domain/hashtags.ts";
+import { horizonPresets, planLabel, whenLabel } from "../domain/horizon.ts";
 import { priorityLabel } from "../domain/labels.ts";
+import { emailsIn, phonesIn, smsHref, whatsAppHref } from "../domain/links.ts";
 import { mapHref, routeHref } from "../domain/place.ts";
+import { parseQuickAdd } from "../domain/quickAdd.ts";
 import {
   recurrenceLabel,
   recurrenceOf,
@@ -46,16 +54,17 @@ import {
   subtasksOf,
   tagsOf,
 } from "../domain/select.ts";
+import { fold } from "../domain/text.ts";
 import type { Item, RecurrenceFreq } from "../domain/types.ts";
-import { FolderCrumbs } from "./folders.tsx";
-import { FolderPicker } from "./folderPick.tsx";
-import { useTasksInGoogle } from "./gcal.tsx";
 import { downloadIcs, googleCalendarUrl } from "../lib/ics.ts";
+import { FolderPicker } from "./folderPick.tsx";
+import { FolderCrumbs } from "./folders.tsx";
+import { useTasksInGoogle } from "./gcal.tsx";
+import { MarkdownField } from "./markdownField.tsx";
 import { placeOp } from "./move.ts";
 import { useUi } from "./state.tsx";
-import { deleteItems } from "./tasks.tsx";
 import { dispatchTaskText, TagMenu, useTagHint } from "./tagHint.tsx";
-import { MarkdownLink } from "./links.tsx";
+import { deleteItems } from "./tasks.tsx";
 import {
   Button,
   control,
@@ -146,7 +155,11 @@ function Fact({
     >
       <span
         className={
-          tone === "warn" ? "text-warn" : tone === "danger" ? "text-danger" : undefined
+          tone === "warn"
+            ? "text-warn"
+            : tone === "danger"
+            ? "text-danger"
+            : undefined
         }
       >
         {children}
@@ -225,7 +238,9 @@ function PlanEditor({ item }: { item: Item }) {
     <div className="grid gap-2">
       {item.plannedFor && (
         <div className="flex items-center justify-between gap-2">
-          <p className="text-sm">{planLabel(item.plannedFor, item.planUntil, today)}</p>
+          <p className="text-sm">
+            {planLabel(item.plannedFor, item.planUntil, today)}
+          </p>
           <button
             type="button"
             className="text-xs text-muted hover:text-ink"
@@ -314,7 +329,12 @@ function DueFields({ item }: { item: Item }) {
                   : "bg-black/[0.04] hover:bg-black/10 dark:bg-white/[0.06] dark:hover:bg-white/10"
               )}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => apply(selected ? null : choice.day, selected ? null : choice.time)}
+              onClick={() =>
+                apply(
+                  selected ? null : choice.day,
+                  selected ? null : choice.time
+                )
+              }
             >
               {choice.label}
             </button>
@@ -328,7 +348,10 @@ function DueFields({ item }: { item: Item }) {
           aria-label="Termín"
           value={day}
           onChange={(event) =>
-            apply(event.target.value || null, event.target.value ? time || null : null)
+            apply(
+              event.target.value || null,
+              event.target.value ? time || null : null
+            )
           }
         />
         <input
@@ -506,7 +529,9 @@ export function Detail({ item }: { item: Item }) {
                     aria-label="Stav"
                     value={item.statusId ?? ""}
                     onChange={(event) =>
-                      dispatch(placeOp(db, item.id, folder.id, event.target.value))
+                      dispatch(
+                        placeOp(db, item.id, folder.id, event.target.value)
+                      )
                     }
                   >
                     {statusesOf(db, folder.id).map((status) => (
@@ -517,11 +542,16 @@ export function Detail({ item }: { item: Item }) {
                   </select>
                 )}
                 {when && (
-                  <Fact onClick={() => toggle("when")} {...(late ? { tone: "danger" as const } : {})}>
+                  <Fact
+                    onClick={() => toggle("when")}
+                    {...(late ? { tone: "danger" as const } : {})}
+                  >
                     {when}
                   </Fact>
                 )}
-                {repeat && <Fact onClick={() => toggle("repeat")}>{repeat}</Fact>}
+                {repeat && (
+                  <Fact onClick={() => toggle("repeat")}>{repeat}</Fact>
+                )}
                 {item.priority && (
                   <button
                     type="button"
@@ -586,7 +616,9 @@ export function Detail({ item }: { item: Item }) {
                 {item.variableSymbol && (
                   <Removable
                     title="Odebrat variabilní symbol"
-                    onClear={() => clearField(item.id, { variableSymbol: null })}
+                    onClear={() =>
+                      clearField(item.id, { variableSymbol: null })
+                    }
                   >
                     VS {item.variableSymbol}
                   </Removable>
@@ -634,12 +666,18 @@ export function Detail({ item }: { item: Item }) {
                 <div className="grid gap-2">
                   {extra === "when" && <WhenFields item={item} />}
                   {extra === "repeat" && (
-                    <RecurrenceEditor item={item} onDone={() => setExtra(null)} />
+                    <RecurrenceEditor
+                      item={item}
+                      onDone={() => setExtra(null)}
+                    />
                   )}
                   {extra === "priority" && <PriorityFields item={item} />}
                   {extra === "person" && <PersonAssign item={item} />}
                   {extra === "tag" && (
-                    <TagAdder item={item} names={allTags.map((tag) => tag.name)} />
+                    <TagAdder
+                      item={item}
+                      names={allTags.map((tag) => tag.name)}
+                    />
                   )}
                   {extra === "wait" && (
                     <RelationComposer
@@ -656,7 +694,10 @@ export function Detail({ item }: { item: Item }) {
                     />
                   )}
                   {extra === "sub" && (
-                    <SubtaskComposer item={item} onDone={() => setExtra(null)} />
+                    <SubtaskComposer
+                      item={item}
+                      onDone={() => setExtra(null)}
+                    />
                   )}
                   {extra === "move" && (
                     <FolderPicker
@@ -769,7 +810,9 @@ export function Detail({ item }: { item: Item }) {
                 <ActionButton
                   tone="danger"
                   onClick={() =>
-                    deleteItems([item], ui.pushToast, () => ui.setSelected(null))
+                    deleteItems([item], ui.pushToast, () =>
+                      ui.setSelected(null)
+                    )
                   }
                 >
                   <Trash2 size={15} /> Smazat
@@ -818,8 +861,8 @@ function ActionButton({
         pressed
           ? "bg-accent-soft text-accent"
           : tone === "danger"
-            ? "bg-ink/[0.06] text-danger hover:bg-danger/10"
-            : "bg-ink/[0.06] hover:bg-ink/10"
+          ? "bg-ink/[0.06] text-danger hover:bg-danger/10"
+          : "bg-ink/[0.06] hover:bg-ink/10"
       )}
       onClick={onClick}
     >
@@ -854,7 +897,9 @@ function DetailTitle({ item }: { item: Item }) {
     const shown = title || item.title;
     pendingCaret.current = Math.min(hint.token.start, shown.length);
     setCaret(pendingCaret.current);
-    dispatchTaskText(db, item, title && title !== item.title ? { title } : {}, [name]);
+    dispatchTaskText(db, item, title && title !== item.title ? { title } : {}, [
+      name,
+    ]);
     field.current?.focus();
   };
   return (
@@ -878,8 +923,24 @@ function DetailTitle({ item }: { item: Item }) {
         }}
         onKeyDown={(event) => {
           const key = hint.onKey(event);
-          if (!key.handled) return;
-          if (key.name) pickTag(key.name);
+          if (key.handled) {
+            if (key.name) pickTag(key.name);
+            return;
+          }
+          if (
+            event.key !== "ArrowDown" ||
+            event.shiftKey ||
+            event.altKey ||
+            event.metaKey ||
+            event.ctrlKey
+          )
+            return;
+          const line = event.currentTarget
+            .closest("[data-detail]")
+            ?.querySelector<HTMLElement>('[aria-label="Popis"]');
+          if (!line) return;
+          event.preventDefault();
+          line.focus();
         }}
         onBlur={(event) => {
           const next = event.relatedTarget;
@@ -923,24 +984,11 @@ function BodyEditor({
   onCollapse: () => void;
 }) {
   const { db } = useSnap();
-  const field = useRef<HTMLTextAreaElement>(null);
-  const cursor = useRef<number | null>(null);
-  const [mode, setMode] = useState<"write" | "read">(
-    item.body ? "read" : "write"
-  );
+  const anchor = useRef<HTMLElement | null>(null);
+  const [fresh] = useState(() => !item.body);
   const [selection, setSelection] = useState("");
-  const [caret, setCaret] = useState(0);
-  const hint = useTagHint(
-    item.type === "task" && mode === "write" ? (item.body ?? "") : "",
-    caret
-  );
-  useLayoutEffect(() => {
-    const node = field.current;
-    if (!node || cursor.current == null) return;
-    node.selectionStart = node.selectionEnd = cursor.current;
-    cursor.current = null;
-  }, [item.body]);
-  const parts = useMemo(() => splitTasks(item.body ?? ""), [item.body]);
+  const [caret, setCaret] = useState((item.body ?? "").length);
+  const hint = useTagHint(item.type === "task" ? item.body ?? "" : "", caret);
   const createTask = () => {
     const title = selection.trim();
     if (!title) return;
@@ -972,15 +1020,25 @@ function BodyEditor({
   };
   const pickTag = (name: string) => {
     if (!hint.token) return;
-    const cleaned = removeToken(item.body ?? "", hint.token.start, hint.token.end);
+    const cleaned = removeToken(
+      item.body ?? "",
+      hint.token.start,
+      hint.token.end
+    );
     const body = cleaned.trim() ? cleaned.replace(/\s+$/, "") : null;
-    cursor.current = Math.min(hint.token.start, cleaned.length);
-    setCaret(cursor.current);
-    dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, [name]);
-    field.current?.focus();
+    setCaret(Math.min(hint.token.start, cleaned.length));
+    dispatchTaskText(db, item, (item.body ?? null) === body ? {} : { body }, [
+      name,
+    ]);
   };
   return (
-    <div className="grid gap-2">
+    <div
+      className="grid gap-2"
+      onKeyDownCapture={(event) => {
+        const key = hint.onKey(event);
+        if (key.handled && key.name) pickTag(key.name);
+      }}
+    >
       {selection && (
         <Button
           tone="soft"
@@ -990,139 +1048,75 @@ function BodyEditor({
           Úkol z výběru
         </Button>
       )}
-      {mode === "write" ? (
-        <>
-        <textarea
-          ref={field}
-          autoFocus
-          className={`${control} min-h-20`}
-          value={item.body ?? ""}
-          onKeyDown={(event) => {
-            const key = hint.onKey(event);
-            if (key.handled) {
-              if (key.name) pickTag(key.name);
-              return;
-            }
-            if (
-              event.key !== "Enter" ||
-              event.shiftKey ||
-              event.altKey ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.nativeEvent.isComposing
-            )
-              return;
-            const next = continueMarkdownList(
-              event.currentTarget.value,
-              event.currentTarget.selectionStart,
-              event.currentTarget.selectionEnd
+      <MarkdownField
+        value={item.body ?? ""}
+        label="Popis"
+        placeholder="Přidat podrobnější popis…"
+        autoFocus={fresh}
+        caret={caret}
+        className="min-h-16 text-sm leading-5"
+        embed={(id) => <TaskEmbed id={id} />}
+        onSelection={setSelection}
+        onCaret={(at, node) => {
+          anchor.current = node;
+          setCaret(at);
+        }}
+        onChange={(next, at) => {
+          setCaret(at);
+          const body = next.trim() ? next : null;
+          if ((item.body ?? null) === body) return;
+          dispatch({ type: "updateItem", id: item.id, patch: { body } });
+        }}
+        onExit={(dir, column) => {
+          if (dir > 0) return;
+          const input = document.activeElement
+            ?.closest("[data-detail]")
+            ?.querySelector<HTMLInputElement>("[data-detail-title]");
+          if (!input) return;
+          const at = Math.min(column, input.value.length);
+          input.focus();
+          input.setSelectionRange(at, at);
+        }}
+        onBlur={(event) => {
+          const next = event.relatedTarget;
+          if (
+            next instanceof Element &&
+            (next.closest("[role=listbox]") ||
+              next.closest("[data-detail-title]"))
+          )
+            return;
+          const raw = item.body ?? "";
+          const pulled =
+            item.type === "task" ? pullHashtags(raw) : { text: raw, names: [] };
+          if (pulled.names.length > 0) {
+            const body = pulled.text || null;
+            dispatchTaskText(
+              db,
+              item,
+              (item.body ?? null) === body ? {} : { body },
+              pulled.names
             );
-            if (!next) return;
-            event.preventDefault();
-            cursor.current = next.cursor;
-            setCaret(next.cursor);
-            dispatch({
-              type: "updateItem",
-              id: item.id,
-              patch: { body: next.value || null },
-            });
-          }}
-          onChange={(event) => {
-            setCaret(event.target.selectionStart ?? event.target.value.length);
-            dispatch({
-              type: "updateItem",
-              id: item.id,
-              patch: { body: event.target.value || null },
-            });
-          }}
-          onBlur={(event) => {
-            const next = event.relatedTarget;
-            if (next instanceof Element && next.closest("[role=listbox]")) return;
-            const raw = event.currentTarget.value;
-            const pulled = item.type === "task" ? pullHashtags(raw) : { text: raw, names: [] };
-            if (pulled.names.length > 0) {
-              const body = pulled.text || null;
-              dispatchTaskText(
-                db,
-                item,
-                (item.body ?? null) === body ? {} : { body },
-                pulled.names
-              );
-            }
-            dispatch({
-              type: "updateItem",
-              id: item.id,
-              patch: {},
-              fileInbox: true,
-            });
-            if (!pulled.text.trim()) onCollapse();
-            else setMode("read");
-          }}
-          onSelect={(event) => {
-            setCaret(event.currentTarget.selectionStart ?? 0);
-            setSelection(
-              event.currentTarget.value.slice(
-                event.currentTarget.selectionStart,
-                event.currentTarget.selectionEnd
-              )
-            );
-          }}
+          }
+          dispatch({
+            type: "updateItem",
+            id: item.id,
+            patch: {},
+            fileInbox: true,
+          });
+          if (!pulled.text.trim()) onCollapse();
+        }}
+      />
+      {hint.open && (
+        <TagMenu
+          anchor={anchor.current}
+          tags={hint.tags}
+          picked={hint.picked}
+          onHover={hint.setHighlight}
+          onPick={pickTag}
         />
-        {hint.open && (
-          <TagMenu
-            anchor={field.current}
-            tags={hint.tags}
-            picked={hint.picked}
-            onHover={hint.setHighlight}
-            onPick={pickTag}
-          />
-        )}
-      </>
-      ) : (
-        <div
-          className="prose-sm grid gap-1 text-sm"
-          onClick={(event) => {
-            const target = event.target;
-            if (target instanceof Element && target.closest("a,button")) return;
-            setMode("write");
-          }}
-        >
-          {parts.map((part, index) =>
-            part.kind === "task" ? (
-              <TaskEmbed key={part.id} id={part.id} />
-            ) : (
-              <Markdown
-                key={index}
-                remarkPlugins={[remarkGfm]}
-                components={{ a: MarkdownLink }}
-              >
-                {linkPhones(part.text)}
-              </Markdown>
-            )
-          )}
-        </div>
       )}
     </div>
   );
-}
-
-function splitTasks(
-  body: string
-): Array<{ kind: "text"; text: string } | { kind: "task"; id: string }> {
-  const parts: Array<
-    { kind: "text"; text: string } | { kind: "task"; id: string }
-  > = [];
-  const pattern = /\{\{task:([A-Za-z0-9_-]+)\}\}/g;
-  let cursor = 0;
-  for (const match of body.matchAll(pattern)) {
-    if (match.index > cursor)
-      parts.push({ kind: "text", text: body.slice(cursor, match.index) });
-    parts.push({ kind: "task", id: match[1] ?? "" });
-    cursor = match.index + match[0].length;
-  }
-  if (cursor < body.length)
-    parts.push({ kind: "text", text: body.slice(cursor) });
-  return parts.filter((part) => part.kind === "task" || part.text.trim());
 }
 
 function TaskEmbed({ id }: { id: string }) {
@@ -1142,10 +1136,18 @@ function TaskEmbed({ id }: { id: string }) {
   return (
     <button
       type="button"
-      className={cx("flex items-center gap-2 border border-line px-2 py-1.5 text-left", hoverRow)}
+      className={cx(
+        "flex items-center gap-2 border border-line px-2 py-1.5 text-left",
+        hoverRow
+      )}
       onClick={() => ui.select(item.id)}
     >
-      <span className={cx("min-w-0 flex-1 truncate", done && "text-muted line-through")}>
+      <span
+        className={cx(
+          "min-w-0 flex-1 truncate",
+          done && "text-muted line-through"
+        )}
+      >
         {item.title}
       </span>
       <OpenMark />
@@ -1298,15 +1300,30 @@ function anchorDay(item: Item): string {
   return dueDateKey(item.dueAt) ?? item.plannedFor ?? todayKey();
 }
 
-function everyPhrase(freq: CustomFreq, count: number): { lead: string; unit: string } {
+function everyPhrase(
+  freq: CustomFreq,
+  count: number
+): { lead: string; unit: string } {
   const few = count >= 2 && count <= 4;
   if (freq === "daily")
-    return { lead: count === 1 ? "Každý" : "Každých", unit: count === 1 ? "den" : few ? "dny" : "dní" };
+    return {
+      lead: count === 1 ? "Každý" : "Každých",
+      unit: count === 1 ? "den" : few ? "dny" : "dní",
+    };
   if (freq === "weekly")
-    return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "týden" : few ? "týdny" : "týdnů" };
+    return {
+      lead: count === 1 ? "Každý" : few ? "Každé" : "Každých",
+      unit: count === 1 ? "týden" : few ? "týdny" : "týdnů",
+    };
   if (freq === "monthly")
-    return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "měsíc" : few ? "měsíce" : "měsíců" };
-  return { lead: count === 1 ? "Každý" : few ? "Každé" : "Každých", unit: count === 1 ? "rok" : few ? "roky" : "let" };
+    return {
+      lead: count === 1 ? "Každý" : few ? "Každé" : "Každých",
+      unit: count === 1 ? "měsíc" : few ? "měsíce" : "měsíců",
+    };
+  return {
+    lead: count === 1 ? "Každý" : few ? "Každé" : "Každých",
+    unit: count === 1 ? "rok" : few ? "roky" : "let",
+  };
 }
 
 function customDraft(rule: Recurrence | null, anchor: string) {
@@ -1320,7 +1337,9 @@ function customDraft(rule: Recurrence | null, anchor: string) {
     };
   }
   const freq: CustomFreq =
-    rule.freq === "daily" || rule.freq === "monthly" || rule.freq === "yearly" ? rule.freq : "weekly";
+    rule.freq === "daily" || rule.freq === "monthly" || rule.freq === "yearly"
+      ? rule.freq
+      : "weekly";
   return {
     freq,
     interval: rule.interval,
@@ -1329,13 +1348,24 @@ function customDraft(rule: Recurrence | null, anchor: string) {
   };
 }
 
-function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) {
+function RecurrenceEditor({
+  item,
+  onDone,
+}: {
+  item: Item;
+  onDone: () => void;
+}) {
   const anchor = anchorDay(item);
   const rule = recurrenceOf(item);
   const preset = recurrencePreset(rule, anchor);
   const [custom, setCustom] = useState(false);
   const [draft, setDraft] = useState(() => customDraft(rule, anchor));
-  const save = (freq: RecurrenceFreq | null, interval = 1, weekdays: number[] | null = null, until: string | null = null) => {
+  const save = (
+    freq: RecurrenceFreq | null,
+    interval = 1,
+    weekdays: number[] | null = null,
+    until: string | null = null
+  ) => {
     dispatch({
       type: "setRecurrence",
       itemId: item.id,
@@ -1369,7 +1399,10 @@ function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) 
             aria-label="Frekvence"
             value={draft.freq}
             onChange={(event) =>
-              setDraft((current) => ({ ...current, freq: event.target.value as CustomFreq }))
+              setDraft((current) => ({
+                ...current,
+                freq: event.target.value as CustomFreq,
+              }))
             }
           >
             <option value="daily">Denně</option>
@@ -1436,7 +1469,10 @@ function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) 
             aria-label="Konec opakování"
             value={draft.until ?? ""}
             onChange={(event) =>
-              setDraft((current) => ({ ...current, until: event.target.value || null }))
+              setDraft((current) => ({
+                ...current,
+                until: event.target.value || null,
+              }))
             }
           />
         </label>
@@ -1464,7 +1500,11 @@ function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) 
     );
   }
   return (
-    <div role="radiogroup" aria-label="Opakování" className="overflow-hidden rounded-lg border border-line">
+    <div
+      role="radiogroup"
+      aria-label="Opakování"
+      className="overflow-hidden rounded-lg border border-line"
+    >
       {REPEAT_PRESETS.map(([id, label]) => (
         <button
           key={id}
@@ -1474,7 +1514,13 @@ function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) 
           className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-black/5 dark:hover:bg-white/10"
           onClick={() => choose(id)}
         >
-          <Check size={15} className={cx("shrink-0", preset === id ? "opacity-100" : "opacity-0")} />
+          <Check
+            size={15}
+            className={cx(
+              "shrink-0",
+              preset === id ? "opacity-100" : "opacity-0"
+            )}
+          />
           {label}
         </button>
       ))}
@@ -1488,7 +1534,13 @@ function RecurrenceEditor({ item, onDone }: { item: Item; onDone: () => void }) 
           setCustom(true);
         }}
       >
-        <Check size={15} className={cx("shrink-0", preset === "custom" ? "opacity-100" : "opacity-0")} />
+        <Check
+          size={15}
+          className={cx(
+            "shrink-0",
+            preset === "custom" ? "opacity-100" : "opacity-0"
+          )}
+        />
         Vlastní…
       </button>
     </div>
@@ -1521,13 +1573,7 @@ function Subtasks({ item }: { item: Item }) {
   );
 }
 
-function SubtaskComposer({
-  item,
-  onDone,
-}: {
-  item: Item;
-  onDone: () => void;
-}) {
+function SubtaskComposer({ item, onDone }: { item: Item; onDone: () => void }) {
   const { db } = useSnap();
   const [title, setTitle] = useState("");
   const add = () => {
@@ -1541,7 +1587,7 @@ function SubtaskComposer({
         folderId: item.folderId,
         title: text,
         parentItemId: item.id,
-        statusId: folder ? (resolvedOpen(db, folder)?.id ?? null) : null,
+        statusId: folder ? resolvedOpen(db, folder)?.id ?? null : null,
       }),
     });
     setTitle("");
@@ -1697,7 +1743,9 @@ function RelationComposer({
       <input
         className={control}
         autoFocus
-        placeholder={mode === "wait" ? "Hledat, nebo nový úkol" : "Hledat položku"}
+        placeholder={
+          mode === "wait" ? "Hledat, nebo nový úkol" : "Hledat položku"
+        }
         value={query}
         onChange={(event) => setQuery(event.target.value)}
       />
@@ -1724,7 +1772,9 @@ function RelationComposer({
           )}
         >
           <Plus size={14} />
-          <span className="min-w-0 flex-1 truncate">Vytvořit „{query.trim()}“</span>
+          <span className="min-w-0 flex-1 truncate">
+            Vytvořit „{query.trim()}“
+          </span>
         </button>
       )}
     </form>

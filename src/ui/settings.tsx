@@ -186,6 +186,17 @@ function SyncPanel() {
               onFocus={(event) => event.currentTarget.select()}
             />
           </Field>
+          <Button
+            disabled={!sync.mnemonic}
+            onClick={() => {
+              void navigator.clipboard.writeText(sync.mnemonic).then(
+                () => ui.pushToast("Kód je zkopírovaný"),
+                () => ui.pushToast("Kód se nepodařilo zkopírovat")
+              );
+            }}
+          >
+            Kopírovat
+          </Button>
           <form
             className="grid gap-2"
             onSubmit={(event) => {

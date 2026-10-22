@@ -9,7 +9,7 @@ npm install
 npm run dev
 ```
 
-Aplikace běží na adrese, kterou vypíše Vite. Data zůstávají v tomhle prohlížeči (IndexedDB). Zálohu stáhneš v Nastavení jako JSON a stejnou cestou ji zase načteš.
+Aplikace běží na http://localhost:5177. Data zůstávají v tomhle prohlížeči (IndexedDB). Zálohu stáhneš v Nastavení jako JSON a stejnou cestou ji zase načteš.
 
 ## Hlasová zkratka
 
@@ -41,9 +41,10 @@ Přihlášení obsluhuje Vercel funkce `api/gcal/[op].js`. Refresh token drží 
    https://www.googleapis.com/auth/calendar.readonly
    https://www.googleapis.com/auth/calendar.app.created
    ```
+
 4. V Clients vytvoř klienta typu Web application a povol tyto redirect URI:
    - `https://<tvoje-doména>/api/gcal/callback`
-   - `http://localhost:5173/api/gcal/callback`
+   - `http://localhost:5177/api/gcal/callback`
 5. Ve Vercelu nastav proměnné prostředí a nasaď znovu:
    - `GOOGLE_CLIENT_ID`
    - `GOOGLE_CLIENT_SECRET`

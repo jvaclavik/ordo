@@ -5,6 +5,7 @@ import { defineConfig } from "vitest/config";
 import { devApi } from "./scripts/devApi.ts";
 
 export default defineConfig({
+  server: { port: 5177 },
   plugins: [
     devApi(),
     tailwindcss(),
