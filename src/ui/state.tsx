@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import type { ViewMode } from "../domain/types.ts";
 
 export type QuickKind = "task" | "note";
 export type QuickState = {
@@ -64,6 +65,10 @@ type Ui = {
   clearPicked: () => void;
   editingBodyId: string | null;
   editBody: (id: string | null) => void;
+  glance: { folderId: string; view: ViewMode } | null;
+  setGlance: (glance: { folderId: string; view: ViewMode } | null) => void;
+  focusId: string | null;
+  setFocusId: (id: string | null) => void;
   toasts: Toast[];
   pushToast: (text: string, undo?: boolean, action?: string) => void;
 };
@@ -83,6 +88,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const [showHidden, setShowHiddenState] = useState(readShowHidden);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [editingBodyId, setEditingBodyId] = useState<string | null>(null);
+  const [glance, setGlance] = useState<{ folderId: string; view: ViewMode } | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
 
   const api = useMemo<Ui>(() => {
     const pushToast = (text: string, undo = false, action?: string) => {
@@ -197,6 +204,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
         setPicked([]);
         setSelectedId(id);
       },
+      glance,
+      setGlance,
+      focusId,
+      setFocusId,
       toasts,
       pushToast,
     };
@@ -213,6 +224,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
     showHidden,
     toasts,
     editingBodyId,
+    glance,
+    focusId,
   ]);
 
   return <Context value={api}>{children}</Context>;

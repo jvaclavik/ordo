@@ -104,6 +104,16 @@ type TreeOpen = {
 
 const TreeOpenContext = createContext<TreeOpen | null>(null);
 
+function useOpenForNote(folderId: string, open: (id: string) => void) {
+  useEffect(() => {
+    const onOver = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === folderId) open(folderId);
+    };
+    document.addEventListener("ordo-note-over", onOver);
+    return () => document.removeEventListener("ordo-note-over", onOver);
+  }, [folderId, open]);
+}
+
 function TreeOpenProvider({
   children,
   openRoots = true,
@@ -358,6 +368,7 @@ function FolderNode({
   const [location] = useLocation();
   const tree = useTreeOpen();
   const open = tree.isOpen(folder.id, depth);
+  useOpenForNote(folder.id, tree.ensureOpen);
   const children = shownChildFolders(db, folder.id, ui.showHidden);
   const movable = folder.system !== "inbox";
   const drag = useDraggable({
@@ -543,6 +554,7 @@ function PageFolderRow({
   const [location] = useLocation();
   const tree = useTreeOpen();
   const open = tree.isOpen(folder.id, depth);
+  useOpenForNote(folder.id, tree.ensureOpen);
   const ui = useUi();
   const children = shownChildFolders(db, folder.id, ui.showHidden);
   const drag = useDraggable({
@@ -766,6 +778,7 @@ function Crumb({
   return (
     <span
       ref={drop.setNodeRef}
+      data-note-folder={folderId ?? undefined}
       className={cx(
         "inline-flex rounded-sm px-0.5",
         hot && "bg-accent-soft ring-2 ring-inset ring-accent"

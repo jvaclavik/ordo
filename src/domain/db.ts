@@ -2,6 +2,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import { keyAtEnd } from "./ordering.ts";
 import { storedAmount, storedSymbol } from "./dictate.ts";
 import { storedPlace } from "./place.ts";
+import { paperIndex } from "./stickies.ts";
 import type { Ctx, Db, Folder, Item, Status, StatusMeaning } from "./types.ts";
 
 export function alive<T extends { isDeleted: boolean }>(rows: T[]): T[] {
@@ -256,6 +257,7 @@ export function withPlan(db: Db): Db {
         spot: storedPlace(item.spot),
         amount: storedAmount(item.amount),
         variableSymbol: storedSymbol(item.variableSymbol),
+        paper: paperIndex(item.paper),
       }, [
         "store",
         "quantity",

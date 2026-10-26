@@ -853,6 +853,7 @@ export function TaskRow({
       tabIndex={-1}
       role={undefined}
       data-task-id={item.id}
+      data-activity-focus={ui.focusId === item.id ? "" : undefined}
       onMouseDown={(event) => {
         listeners?.onMouseDown?.(event);
         if (event.shiftKey || event.metaKey || event.ctrlKey)
@@ -1589,6 +1590,7 @@ function BoardCard({ item }: { item: Item }) {
       tabIndex={-1}
       role={undefined}
       data-task-id={item.id}
+      data-activity-focus={ui.focusId === item.id ? "" : undefined}
       onMouseDown={(event) => {
         listeners?.onMouseDown?.(event);
         if (event.shiftKey || event.metaKey || event.ctrlKey)

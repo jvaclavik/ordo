@@ -1,6 +1,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import {
   Calendar,
+  Clock,
   House,
   Menu,
   MoreHorizontal,
@@ -28,6 +29,7 @@ import { dispatch, redo, undo, useSnap } from "../data/store.tsx";
 import { getSyncView, subscribeSync } from "../data/sync.ts";
 import { alive, byId, resolvedClosed, resolvedOpen } from "../domain/db.ts";
 import { mapStatus } from "../domain/select.ts";
+import { ActivityPage, openLinkedItem } from "./activity.tsx";
 import { CalendarBoard } from "./calendar.tsx";
 import { Detail } from "./detail.tsx";
 import { DragLayer } from "./dnd.tsx";
@@ -230,10 +232,45 @@ function SyncNote() {
 function Frame() {
   const snap = useSnap();
   const ui = useUi();
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const sidebar = useSidebarWidth();
   const selected =
     ui.picked.length > 0 ? null : byId(snap.db.items, ui.selectedId);
+  const glance = ui.glance;
+  const focusId = ui.focusId;
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (typeof id === "string" && id)
+        openLinkedItem(snap.db, id, ui, setLocation);
+    };
+    document.addEventListener("ordo-open-item", onOpen);
+    return () => document.removeEventListener("ordo-open-item", onOpen);
+  }, [snap.db, ui, setLocation]);
+  useEffect(() => {
+    if (!glance) return;
+    const folder = byId(snap.db.folders, glance.folderId);
+    const here =
+      folder?.system === "inbox"
+        ? location === "/inbox"
+        : location === `/folder/${glance.folderId}`;
+    if (!folder || !here) ui.setGlance(null);
+  }, [location, glance, ui.setGlance, snap.db.folders]);
+  useEffect(() => {
+    if (!focusId) return;
+    const id = CSS.escape(focusId);
+    const frame = requestAnimationFrame(() => {
+      const node = document.querySelector(
+        `[data-note-id="${id}"], [data-task-id="${id}"]`
+      );
+      if (node instanceof HTMLElement) node.scrollIntoView({ block: "center" });
+    });
+    const timer = window.setTimeout(() => ui.setFocusId(null), 1800);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [focusId, location, ui.setFocusId]);
 
   return (
     <div
@@ -322,6 +359,7 @@ function Frame() {
             <Route path="/people/:id" component={PersonRoute} />
             <Route path="/calendar" component={CalendarRoute} />
             <Route path="/add" component={AddRoute} />
+            <Route path="/aktivita" component={ActivityPage} />
             <Route path="/settings" component={SettingsPage} />
             <Route path="/pruvodce" component={GuidePage} />
             <Route path="/trash" component={TrashPage} />
@@ -1035,6 +1073,7 @@ function Sidebar() {
             icon={<Calendar size={18} />}
           />
           <Side href="/people" label="Lidé" icon={<Users size={18} />} />
+          <Side href="/aktivita" label="Aktivita" icon={<Clock size={18} />} />
         </nav>
         {tags.length > 0 && (
           <div className="grid gap-1 px-4">
@@ -1130,6 +1169,7 @@ function Side({
     <Link
       href={href}
       ref={drop.setNodeRef}
+      data-note-trash={dropId === "trash" ? "" : undefined}
       className={cx(
         "flex min-w-0 items-center rounded-md py-2",
         tree ? "gap-1.5 pr-0.5 pl-1" : "gap-3 px-3",

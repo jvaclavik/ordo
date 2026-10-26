@@ -156,6 +156,7 @@ export type Item = {
   pinZ: number | null;
   pinW: number | null;
   pinH: number | null;
+  paper: number | null;
   isPinned: boolean;
   isArchived: boolean;
   isDeleted: boolean;
@@ -306,6 +307,7 @@ export type ItemPatch = {
   pinZ?: number | null;
   pinW?: number | null;
   pinH?: number | null;
+  paper?: number | null;
   isPinned?: boolean;
   isArchived?: boolean;
 };
@@ -332,6 +334,12 @@ export type NewItem = {
   sortOrder: string;
   applyRules: boolean;
   tagIds: string[];
+  paper: number | null;
+  pinX: number | null;
+  pinY: number | null;
+  pinZ: number | null;
+  pinW: number | null;
+  pinH: number | null;
 };
 
 export type Ctx = {

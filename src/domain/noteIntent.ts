@@ -31,14 +31,17 @@ export function splitNoteDraft(text: string) {
     .trim();
   if (!source) return null;
   const first = source.split("\n", 1)[0] ?? source;
-  const title = first
-    .replace(/^#{1,6}\s+/, "")
-    .replace(/^[-*]\s+/, "")
-    .replace(/^\d+\.\s+/, "")
-    .trim()
-    .slice(0, 500);
+  const title = plainNoteTitle(first).slice(0, 500);
   if (!title) return null;
   return { title, body: source };
+}
+
+export function plainNoteTitle(line: string): string {
+  return line
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+(?:\[[ xX]\]\s+)?/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .trim();
 }
 
 function remainder(source: string, start: number, end: number) {

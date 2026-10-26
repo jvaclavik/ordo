@@ -8,11 +8,11 @@ export const STICKY_MAX_W = 560;
 export const STICKY_MAX_H = 720;
 
 export const STICKY_PAPERS = [
-  { bg: "#f4e4a6", edge: "#e6cf7c" },
-  { bg: "#f7d4b8", edge: "#e8bc96" },
-  { bg: "#d7e7cb", edge: "#bdd4ae" },
-  { bg: "#d5e3f6", edge: "#b7cceb" },
-  { bg: "#f6d5de", edge: "#e7b8c6" },
+  { bg: "#f4e4a6", edge: "#e6cf7c", name: "žlutá" },
+  { bg: "#f7d4b8", edge: "#e8bc96", name: "broskvová" },
+  { bg: "#d7e7cb", edge: "#bdd4ae", name: "zelená" },
+  { bg: "#d5e3f6", edge: "#b7cceb", name: "modrá" },
+  { bg: "#f6d5de", edge: "#e7b8c6", name: "růžová" },
 ] as const;
 
 export function stickyColumns(width: number) {
@@ -40,6 +40,26 @@ function hashId(id: string) {
 
 export function stickyPaper(id: string) {
   return STICKY_PAPERS[hashId(id) % STICKY_PAPERS.length] ?? STICKY_PAPERS[0];
+}
+
+export function paperIndex(paper: number | null | undefined): number | null {
+  if (typeof paper !== "number" || !Number.isInteger(paper)) return null;
+  if (paper < 0 || paper >= STICKY_PAPERS.length) return null;
+  return paper;
+}
+
+export function paperLabel(paper: number | null | undefined): string {
+  const index = paperIndex(paper);
+  if (index == null) return "původní";
+  return STICKY_PAPERS[index]?.name ?? "původní";
+}
+
+export function stickyTone(paper: number | null | undefined, id: string) {
+  const picked = paperIndex(paper);
+  const tone = picked == null ? stickyPaper(id) : STICKY_PAPERS[picked] ?? STICKY_PAPERS[0];
+  const index =
+    picked ?? STICKY_PAPERS.findIndex((item) => item.bg === tone.bg);
+  return { ...tone, index: index === -1 ? 0 : index };
 }
 
 export function clampStickySize(width: number, height: number) {

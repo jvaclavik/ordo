@@ -58,6 +58,7 @@ describe("synchronizace", () => {
       pinZ: null,
       pinW: null,
       pinH: null,
+      paper: null,
       isPinned: false,
       isArchived: false,
     });
@@ -108,6 +109,7 @@ describe("synchronizace", () => {
       pinZ: null,
       pinW: null,
       pinH: null,
+      paper: null,
       isPinned: false,
       isArchived: false,
     });
@@ -144,6 +146,7 @@ describe("synchronizace", () => {
       pinZ: null,
       pinW: null,
       pinH: null,
+      paper: null,
       isPinned: false,
       isArchived: false,
     });

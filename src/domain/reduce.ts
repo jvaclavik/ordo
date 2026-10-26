@@ -25,6 +25,7 @@ import { storedAmount, storedSymbol } from "./dictate.ts";
 import { storedPlace } from "./place.ts";
 import { nextOccurrence, recurrenceOf, weekdaysTo } from "./recurrence.ts";
 import { matchingRule } from "./rules.ts";
+import { clampStickySize, paperIndex } from "./stickies.ts";
 import { fold } from "./text.ts";
 import type {
   Ctx,
@@ -500,6 +501,10 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
       : null;
   const sortOrder =
     slotted ?? (input.sortOrder || sortKeyForStatus(db, folder.id, statusId));
+  const sized =
+    input.pinW != null && input.pinH != null
+      ? clampStickySize(input.pinW, input.pinH)
+      : null;
   const item: Item = {
     id: input.id,
     workspaceId: folder.workspaceId,
@@ -528,11 +533,12 @@ function createItem(db: Db, input: NewItem, ctx: Ctx): Db {
     pristine: true,
     sortOrder,
     dayOrder: null,
-    pinX: null,
-    pinY: null,
-    pinZ: null,
-    pinW: null,
-    pinH: null,
+    pinX: input.pinX ?? null,
+    pinY: input.pinY ?? null,
+    pinZ: input.pinZ ?? null,
+    pinW: sized?.width ?? null,
+    pinH: sized?.height ?? null,
+    paper: paperIndex(input.paper),
     isPinned: false,
     isArchived: false,
     isDeleted: false,
@@ -666,6 +672,8 @@ function updateItem(
             pinZ: patch.pinZ !== undefined ? patch.pinZ : row.pinZ ?? null,
             pinW: patch.pinW !== undefined ? patch.pinW : row.pinW ?? null,
             pinH: patch.pinH !== undefined ? patch.pinH : row.pinH ?? null,
+            paper:
+              patch.paper !== undefined ? paperIndex(patch.paper) : row.paper ?? null,
             isPinned:
               patch.isPinned !== undefined ? patch.isPinned : row.isPinned,
             isArchived:

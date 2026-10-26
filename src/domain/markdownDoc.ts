@@ -4,6 +4,25 @@ export type Level = 1 | 2 | 3 | 4 | 5 | 6;
 export type Bullet = "-" | "*" | "+";
 export type Suffix = "." | ")";
 
+export const TEXT_COLORS = [
+  { id: "red", label: "Červená" },
+  { id: "green", label: "Zelená" },
+  { id: "blue", label: "Modrá" },
+  { id: "orange", label: "Oranžová" },
+  { id: "purple", label: "Fialová" },
+] as const;
+
+export type TextColor = (typeof TEXT_COLORS)[number]["id"];
+
+export type FormatAction =
+  | { type: "mark"; mark: "strong" | "em" | "underline" }
+  | { type: "color"; color: TextColor | null }
+  | { type: "link"; href: string }
+  | { type: "item"; id: string; title: string }
+  | { type: "heading"; level: 1 | 2 | 3 }
+  | { type: "bullet" }
+  | { type: "check" };
+
 export type Block =
   | { kind: "p"; text: string }
   | { kind: "h"; level: Level; text: string }
@@ -25,6 +44,11 @@ export type Inline = {
   kind: "text" | "strong" | "em" | "code" | "strike" | "link";
   value: string;
   href?: string;
+  strong?: boolean;
+  em?: boolean;
+  strike?: boolean;
+  underline?: boolean;
+  color?: TextColor;
   from: number;
   to: number;
   valueFrom: number;
@@ -455,6 +479,21 @@ export function applyPaste(
   return { blocks: copy, index: index + 1 + loc.index, caret: loc.caret };
 }
 
+export function applySourceRange(
+  blocks: Block[],
+  start: number,
+  end: number,
+  insert: string
+): Edit {
+  const source = serializeDocument(blocks);
+  const from = Math.max(0, Math.min(start, end, source.length));
+  const to = Math.max(from, Math.min(Math.max(start, end), source.length));
+  const next = source.slice(0, from) + insert + source.slice(to);
+  const parsed = parseDocument(next);
+  const at = locateCaret(parsed, from + insert.length);
+  return { blocks: parsed, index: at.index, caret: at.caret };
+}
+
 function pushText(out: Inline[], value: string, from: number) {
   if (!value) return;
   let cursor = from;
@@ -497,6 +536,91 @@ function wrapped(
   };
 }
 
+type StylePatch = {
+  strong?: true;
+  em?: true;
+  strike?: true;
+  underline?: true;
+  color?: TextColor;
+};
+
+function closedAt(source: string, from: number, close: string): number {
+  const end = source.indexOf(close, from);
+  if (end < 0 || source.slice(from, end).includes("\n")) return -1;
+  return end;
+}
+
+function shiftRun(run: Inline, base: number): Inline {
+  return {
+    ...run,
+    from: run.from + base,
+    to: run.to + base,
+    valueFrom: run.valueFrom + base,
+  };
+}
+
+function applyPatch(run: Inline, patch: StylePatch): Inline {
+  const next: Inline = { ...run };
+  if (patch.underline) next.underline = true;
+  if (patch.color && !next.color) next.color = patch.color;
+  if (patch.strong) {
+    if (next.kind === "text") next.kind = "strong";
+    else if (next.kind !== "strong" && next.kind !== "code") next.strong = true;
+  }
+  if (patch.em) {
+    if (next.kind === "text") next.kind = "em";
+    else if (next.kind !== "em" && next.kind !== "code") next.em = true;
+  }
+  if (patch.strike) {
+    if (next.kind === "text") next.kind = "strike";
+    else if (next.kind !== "strike" && next.kind !== "code") next.strike = true;
+  }
+  return next;
+}
+
+function adopt(
+  inner: Inline[],
+  start: number,
+  openLen: number,
+  end: number,
+  closeLen: number,
+  patch: StylePatch
+): Inline[] {
+  if (inner.length === 0) return [];
+  const shifted = inner.map((run) =>
+    applyPatch(shiftRun(run, start + openLen), patch)
+  );
+  const first = shifted[0];
+  const last = shifted[shifted.length - 1];
+  if (!first || !last) return [];
+  first.from = start;
+  last.to = end + closeLen;
+  return shifted;
+}
+
+function takeWrapped(
+  out: Inline[],
+  source: string,
+  i: number,
+  open: string,
+  close: string,
+  patch: StylePatch
+): number {
+  const end = closedAt(source, i + open.length, close);
+  if (end <= i + open.length) return -1;
+  const adopted = adopt(
+    parseInline(source.slice(i + open.length, end)),
+    i,
+    open.length,
+    end,
+    close.length,
+    patch
+  );
+  if (adopted.length === 0) return -1;
+  out.push(...adopted);
+  return end + close.length;
+}
+
 export function parseInline(source: string): Inline[] {
   const out: Inline[] = [];
   let i = 0;
@@ -509,20 +633,35 @@ export function parseInline(source: string): Inline[] {
         continue;
       }
     }
+    const color = /^\{(red|green|blue|orange|purple)\}/.exec(source.slice(i));
+    if (color?.[1]) {
+      const next = takeWrapped(out, source, i, color[0], "{/}", {
+        color: color[1] as TextColor,
+      });
+      if (next >= 0) {
+        i = next;
+        continue;
+      }
+    }
+    if (source.startsWith("++", i)) {
+      const next = takeWrapped(out, source, i, "++", "++", { underline: true });
+      if (next >= 0) {
+        i = next;
+        continue;
+      }
+    }
     if (source.startsWith("**", i) || source.startsWith("__", i)) {
       const marker = source.slice(i, i + 2);
-      const end = source.indexOf(marker, i + 2);
-      if (end > i + 2 && !source.slice(i + 2, end).includes("\n")) {
-        out.push(wrapped("strong", i, 2, source.slice(i + 2, end)));
-        i = end + 2;
+      const next = takeWrapped(out, source, i, marker, marker, { strong: true });
+      if (next >= 0) {
+        i = next;
         continue;
       }
     }
     if (source.startsWith("~~", i)) {
-      const end = source.indexOf("~~", i + 2);
-      if (end > i + 2 && !source.slice(i + 2, end).includes("\n")) {
-        out.push(wrapped("strike", i, 2, source.slice(i + 2, end)));
-        i = end + 2;
+      const next = takeWrapped(out, source, i, "~~", "~~", { strike: true });
+      if (next >= 0) {
+        i = next;
         continue;
       }
     }
@@ -530,9 +669,19 @@ export function parseInline(source: string): Inline[] {
     if ((marker === "*" || marker === "_") && source[i + 1] !== marker) {
       const closer = closingEm(source, i, marker);
       if (closer > i + 1) {
-        out.push(wrapped("em", i, 1, source.slice(i + 1, closer)));
-        i = closer + 1;
-        continue;
+        const adopted = adopt(
+          parseInline(source.slice(i + 1, closer)),
+          i,
+          1,
+          closer,
+          1,
+          { em: true }
+        );
+        if (adopted.length > 0) {
+          out.push(...adopted);
+          i = closer + 1;
+          continue;
+        }
       }
     }
     if (marker === "[") {
@@ -560,7 +709,15 @@ export function parseInline(source: string): Inline[] {
 
 function specialAt(source: string, index: number): boolean {
   const char = source[index];
-  return char === "*" || char === "_" || char === "`" || char === "~" || char === "[";
+  if (char === "+" && source[index + 1] === "+") return true;
+  if (
+    char === "{" &&
+    /^\{(?:red|green|blue|orange|purple)\}/.test(source.slice(index))
+  )
+    return true;
+  return (
+    char === "*" || char === "_" || char === "`" || char === "~" || char === "["
+  );
 }
 
 function closingEm(source: string, index: number, marker: string): number {
@@ -574,4 +731,305 @@ function closingEm(source: string, index: number, marker: string): number {
     return at;
   }
   return -1;
+}
+
+const MARK_EDGES = {
+  strong: ["**", "**"],
+  em: ["*", "*"],
+  underline: ["++", "++"],
+} as const;
+
+function formattable(
+  block: Block
+): block is Exclude<Block, { kind: "rule" } | { kind: "task" } | { kind: "code" }> {
+  return block.kind !== "rule" && block.kind !== "task" && block.kind !== "code";
+}
+
+function indentOf(block: Block): string {
+  if (block.kind === "ul" || block.kind === "ol" || block.kind === "check")
+    return block.indent;
+  return "";
+}
+
+function toggleWrap(
+  text: string,
+  lo: number,
+  hi: number,
+  open: string,
+  close: string
+): { text: string; from: number; to: number } | null {
+  if (lo === hi) return null;
+  const around =
+    text.slice(lo - open.length, lo) === open &&
+    text.slice(hi, hi + close.length) === close;
+  if (around) {
+    const from = lo - open.length;
+    return {
+      text:
+        text.slice(0, from) + text.slice(lo, hi) + text.slice(hi + close.length),
+      from,
+      to: hi - open.length,
+    };
+  }
+  const slice = text.slice(lo, hi);
+  if (
+    slice.startsWith(open) &&
+    slice.endsWith(close) &&
+    slice.length >= open.length + close.length
+  ) {
+    const inner = slice.slice(open.length, slice.length - close.length);
+    return {
+      text: text.slice(0, lo) + inner + text.slice(hi),
+      from: lo,
+      to: lo + inner.length,
+    };
+  }
+  const from = lo + open.length;
+  return {
+    text: text.slice(0, lo) + open + slice + close + text.slice(hi),
+    from,
+    to: from + slice.length,
+  };
+}
+
+function stripColors(value: string): string {
+  return value.replace(
+    /\{(?:red|green|blue|orange|purple)\}([\s\S]*?)\{\/\}/g,
+    "$1"
+  );
+}
+
+function colorAround(
+  text: string,
+  lo: number,
+  hi: number
+): { name: TextColor; start: number; end: number } | null {
+  const open = /\{(red|green|blue|orange|purple)\}$/.exec(text.slice(0, lo));
+  if (!open?.[1] || !text.startsWith("{/}", hi)) return null;
+  return {
+    name: open[1] as TextColor,
+    start: lo - open[0].length,
+    end: hi + 3,
+  };
+}
+
+function applyColor(
+  text: string,
+  lo: number,
+  hi: number,
+  color: TextColor | null
+): { text: string; from: number; to: number } | null {
+  if (lo === hi) return null;
+  const around = colorAround(text, lo, hi);
+  let start = lo;
+  let end = hi;
+  let body = text.slice(lo, hi);
+  if (around) {
+    start = around.start;
+    end = around.end;
+    if (color == null || color === around.name) {
+      return {
+        text: text.slice(0, start) + body + text.slice(end),
+        from: start,
+        to: start + body.length,
+      };
+    }
+  }
+  body = stripColors(body);
+  if (color == null) {
+    if (!around && body === text.slice(lo, hi)) return null;
+    return {
+      text: text.slice(0, start) + body + text.slice(end),
+      from: start,
+      to: start + body.length,
+    };
+  }
+  const open = `{${color}}`;
+  const wrapped = `${open}${body}{/}`;
+  const from = start + open.length;
+  return {
+    text: text.slice(0, start) + wrapped + text.slice(end),
+    from,
+    to: from + body.length,
+  };
+}
+
+function cleanHref(raw: string): string {
+  const href = raw.trim();
+  if (!href || /^javascript:/i.test(href)) return "";
+  if (/^(https?:|mailto:|tel:|item:)/i.test(href)) return href;
+  return `https://${href}`;
+}
+
+function insertLink(
+  text: string,
+  lo: number,
+  hi: number,
+  href: string
+): { text: string; from: number; to: number } | null {
+  const url = cleanHref(href);
+  if (!url) return null;
+  const label = text.slice(lo, hi).replace(/[[\]]/g, "").trim() || url;
+  const inserted = `[${label}](${url})`;
+  const from = lo + 1;
+  return {
+    text: text.slice(0, lo) + inserted + text.slice(hi),
+    from,
+    to: from + label.length,
+  };
+}
+
+function insertItem(
+  text: string,
+  lo: number,
+  hi: number,
+  id: string,
+  title: string
+): { text: string; from: number; to: number } | null {
+  const safe = id.replace(/[^A-Za-z0-9_-]/g, "");
+  if (!safe) return null;
+  const label =
+    (text.slice(lo, hi).trim() || title).replace(/[[\]\n]/g, "").trim() ||
+    "Odkaz";
+  const inserted = `[${label}](item:${safe})`;
+  const from = lo + 1;
+  return {
+    text: text.slice(0, lo) + inserted + text.slice(hi),
+    from,
+    to: from + label.length,
+  };
+}
+
+function wrapInline(
+  text: string,
+  from: number,
+  to: number,
+  action: FormatAction
+): { text: string; from: number; to: number } | null {
+  const lo = Math.max(0, Math.min(from, to, text.length));
+  const hi = Math.max(lo, Math.min(Math.max(from, to), text.length));
+  if (action.type === "link") return insertLink(text, lo, hi, action.href);
+  if (action.type === "item")
+    return insertItem(text, lo, hi, action.id, action.title);
+  if (action.type === "color") return applyColor(text, lo, hi, action.color);
+  if (action.type === "mark") {
+    const edges = MARK_EDGES[action.mark];
+    return toggleWrap(text, lo, hi, edges[0], edges[1]);
+  }
+  return null;
+}
+
+export type FormatEdit = Edit & {
+  select: { index: number; from: number; endIndex: number; to: number } | null;
+};
+
+function applyBlockFormat(
+  blocks: Block[],
+  from: number,
+  to: number,
+  startCaret: number,
+  focusCaret: number,
+  action: Extract<FormatAction, { type: "heading" | "bullet" | "check" }>
+): FormatEdit | null {
+  const copy = blocks.slice();
+  let changed = false;
+  for (let index = from; index <= to; index += 1) {
+    const block = copy[index];
+    if (!block || !formattable(block)) continue;
+    const text = block.text;
+    let next: Block;
+    if (action.type === "heading") {
+      next =
+        block.kind === "h" && block.level === action.level
+          ? { kind: "p", text }
+          : { kind: "h", level: action.level, text };
+    } else if (action.type === "bullet") {
+      next =
+        block.kind === "ul"
+          ? { kind: "p", text }
+          : {
+              kind: "ul",
+              indent: indentOf(block),
+              marker: "-",
+              text,
+            };
+    } else {
+      next =
+        block.kind === "check"
+          ? { kind: "p", text }
+          : {
+              kind: "check",
+              indent: indentOf(block),
+              marker: "-",
+              checked: false,
+              text,
+            };
+    }
+    copy[index] = next;
+    changed = true;
+  }
+  if (!changed) return null;
+  const last = copy[to];
+  const caret =
+    last && formattable(last) ? Math.min(focusCaret, last.text.length) : 0;
+  const collapsed = from === to && startCaret === focusCaret;
+  return {
+    blocks: copy,
+    index: to,
+    caret,
+    select: collapsed
+      ? null
+      : { index: from, from: startCaret, endIndex: to, to: caret },
+  };
+}
+
+export function applyFormat(
+  blocks: Block[],
+  anchor: { index: number; caret: number },
+  focus: { index: number; caret: number },
+  action: FormatAction
+): FormatEdit | null {
+  const forward =
+    anchor.index < focus.index ||
+    (anchor.index === focus.index && anchor.caret <= focus.caret);
+  const start = forward ? anchor : focus;
+  const end = forward ? focus : anchor;
+  if (
+    action.type === "heading" ||
+    action.type === "bullet" ||
+    action.type === "check"
+  )
+    return applyBlockFormat(
+      blocks,
+      start.index,
+      end.index,
+      start.caret,
+      end.caret,
+      action
+    );
+  let next = blocks;
+  let selFrom = start.caret;
+  let selTo = end.caret;
+  for (let index = start.index; index <= end.index; index += 1) {
+    const block = next[index];
+    if (!block || !formattable(block)) continue;
+    const from = index === start.index ? start.caret : 0;
+    const to = index === end.index ? end.caret : block.text.length;
+    const updated = wrapInline(block.text, from, to, action);
+    if (!updated || updated.text === block.text) continue;
+    if (next === blocks) next = blocks.slice();
+    next[index] = withText(block, updated.text);
+    if (index === start.index) selFrom = updated.from;
+    if (index === end.index) selTo = updated.to;
+  }
+  if (next === blocks) return null;
+  const collapsed = start.index === end.index && start.caret === end.caret;
+  return {
+    blocks: next,
+    index: end.index,
+    caret: selTo,
+    select: collapsed
+      ? null
+      : { index: start.index, from: selFrom, endIndex: end.index, to: selTo },
+  };
 }

@@ -64,5 +64,7 @@ describe("splitNoteDraft", () => {
       body: "Název\n\nodstavec",
     });
     expect(splitNoteDraft("   ")).toBeNull();
+    expect(splitNoteDraft("## Nadpis\ntext")?.title).toBe("Nadpis");
+    expect(splitNoteDraft("- [ ] Mléko")?.title).toBe("Mléko");
   });
 });

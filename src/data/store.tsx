@@ -1,6 +1,7 @@
 import { openDB, type IDBPDatabase } from "idb";
 import { nanoid } from "nanoid";
 import { useSyncExternalStore } from "react";
+import { readActivity, recordActivity, type ActivityEntry } from "../domain/activity.ts";
 import { todayKey } from "../domain/dates.ts";
 import { isValidDb, withPlan } from "../domain/db.ts";
 import { needsLastReminderUrgent } from "../domain/horizon.ts";
@@ -19,6 +20,7 @@ import {
 export type Snap = {
   ready: boolean;
   db: Db;
+  activity: ActivityEntry[];
   past: Db[];
   future: Db[];
   memoryOnly: boolean;
@@ -30,6 +32,7 @@ const listeners = new Set<() => void>();
 let snap: Snap = {
   ready: false,
   db: freshDb(runtime()),
+  activity: [],
   past: [],
   future: [],
   memoryOnly: false,
@@ -74,9 +77,11 @@ export function useSnap() {
 }
 
 export function dispatch(op: Op): Db {
-  const db = reduce(snap.db, op, runtime());
-  if (db === snap.db) return db;
-  snap = { ...snap, db, past: [...snap.past, snap.db].slice(-40), future: [] };
+  const before = snap.db;
+  const db = reduce(before, op, runtime());
+  if (db === before) return db;
+  const activity = [...recordActivity(before, op, runtime()).reverse(), ...snap.activity].slice(0, 100);
+  snap = { ...snap, db, activity, past: [...snap.past, before].slice(-40), future: [] };
   emit();
   queuePersist();
   return db;
@@ -157,6 +162,7 @@ async function persist() {
   if (!database) return;
   try {
     await database.put("kv", snap.db, "state");
+    await database.put("kv", snap.activity, "activity");
     if (snap.persistError) {
       snap = { ...snap, persistError: null };
       emit();
@@ -181,6 +187,7 @@ export function loadStore() {
         },
       });
       const stored = await database.get("kv", "state");
+      const storedActivity = await database.get("kv", "activity");
       const local = isValidDb(stored)
         ? collapseInboxes(withPlan(stored))
         : null;
@@ -188,6 +195,7 @@ export function loadStore() {
         ...snap,
         ready: true,
         db: local ?? freshDb(runtime()),
+        activity: readActivity(storedActivity),
         memoryOnly: false,
       };
       emit();
@@ -220,7 +228,13 @@ export function loadStore() {
       promoteLastReminders();
       return;
     } catch {
-      snap = { ...snap, ready: true, memoryOnly: true, db: freshDb(runtime()) };
+      snap = {
+        ...snap,
+        ready: true,
+        memoryOnly: true,
+        db: freshDb(runtime()),
+        activity: [],
+      };
     }
     emit();
     promoteLastReminders();

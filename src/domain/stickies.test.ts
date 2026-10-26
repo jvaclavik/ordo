@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STICKY_GAP, STICKY_H, STICKY_MAX_H, STICKY_MAX_W, STICKY_MIN_H, STICKY_MIN_W, STICKY_PAD, STICKY_W, clampStickySize, stickyColumns, stickyPaper, stickySlot, stickyTilt } from "./stickies.ts";
+import { STICKY_GAP, STICKY_H, STICKY_MAX_H, STICKY_MAX_W, STICKY_MIN_H, STICKY_MIN_W, STICKY_PAD, STICKY_PAPERS, STICKY_W, clampStickySize, paperIndex, paperLabel, stickyColumns, stickyPaper, stickySlot, stickyTilt, stickyTone } from "./stickies.ts";
 
 describe("lístečky", () => {
   it("skládá volné lístečky do mřížky", () => {
@@ -28,5 +28,16 @@ describe("lístečky", () => {
     expect(stickyPaper("abc")).toEqual(stickyPaper("abc"));
     expect(stickyTilt("abc")).toBe(stickyTilt("abc"));
     expect(Math.abs(stickyTilt("abc"))).toBeLessThanOrEqual(2.1);
+  });
+
+  it("bere zvolenou barvu a jinak barvu z id", () => {
+    expect(stickyTone(2, "abc").bg).toBe(STICKY_PAPERS[2].bg);
+    expect(stickyTone(2, "abc").name).toBe("zelená");
+    expect(stickyTone(null, "abc").bg).toBe(stickyPaper("abc").bg);
+    expect(stickyTone(undefined, "abc").index).toBe(stickyTone(null, "abc").index);
+    expect(paperIndex(9)).toBeNull();
+    expect(paperIndex(1.5)).toBeNull();
+    expect(paperLabel(0)).toBe("žlutá");
+    expect(paperLabel(null)).toBe("původní");
   });
 });

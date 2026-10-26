@@ -808,6 +808,7 @@ function DayItem({
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       data-task-id={item.id}
+      data-activity-focus={ui.focusId === item.id ? "" : undefined}
       className={cx(
         "flex w-full cursor-grab items-start gap-1 rounded-md pr-1 active:cursor-grabbing",
         hoverRow,

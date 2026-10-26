@@ -24,6 +24,12 @@ export function newItem(init: {
   parentItemId?: string | null;
   applyRules?: boolean;
   tagIds?: string[];
+  paper?: number | null;
+  pinX?: number | null;
+  pinY?: number | null;
+  pinZ?: number | null;
+  pinW?: number | null;
+  pinH?: number | null;
 }): NewItem {
   return {
     id: init.id,
@@ -47,5 +53,11 @@ export function newItem(init: {
     parentItemId: init.parentItemId ?? null,
     applyRules: init.applyRules ?? true,
     tagIds: init.tagIds ?? [],
+    paper: init.paper ?? null,
+    pinX: init.pinX ?? null,
+    pinY: init.pinY ?? null,
+    pinZ: init.pinZ ?? null,
+    pinW: init.pinW ?? null,
+    pinH: init.pinH ?? null,
   };
 }

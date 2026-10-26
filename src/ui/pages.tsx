@@ -1,10 +1,12 @@
 import {
   CalendarDays,
+  ChevronDown,
   ChevronRight,
+  ChevronsUp,
+  ChevronUp,
   Columns3,
   List,
   Pencil,
-  StickyNote,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import {
@@ -14,13 +16,15 @@ import {
   useState,
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { showOtherCalendars, useGcalMonth } from "../data/gcal.ts";
 import { dispatch, useSnap } from "../data/store.tsx";
 import { isUntouched } from "../data/syncMap.ts";
 import { isPaletteColor } from "../domain/color.ts";
-import { addDays, todayKey } from "../domain/dates.ts";
+import { addDays, dateKey, formatDay, todayKey } from "../domain/dates.ts";
 import {
   byId,
   descendantFolderIds,
@@ -28,8 +32,13 @@ import {
   resolvedOpen,
 } from "../domain/db.ts";
 import { newItem } from "../domain/factory.ts";
-import { viewLabel } from "../domain/labels.ts";
-import { splitNoteDraft, takeNoteIntent } from "../domain/noteIntent.ts";
+import { whenLabel } from "../domain/horizon.ts";
+import { priorityLabel } from "../domain/labels.ts";
+import {
+  plainNoteTitle,
+  splitNoteDraft,
+  takeNoteIntent,
+} from "../domain/noteIntent.ts";
 import { keyAtStart } from "../domain/ordering.ts";
 import { opsFromTaskLines, parseQuickAdd } from "../domain/quickAdd.ts";
 import {
@@ -38,28 +47,34 @@ import {
   folderItems,
   folderTrail,
   isOpenItem,
+  mapStatus,
   searchItems,
   searchTags,
   shownChildFolders,
   tagItems,
+  tagsOf,
   visibleItems,
 } from "../domain/select.ts";
 import {
   clampStickySize,
   STICKY_H,
+  STICKY_PAPERS,
   STICKY_W,
   stickyColumns,
-  stickyPaper,
   stickySlot,
   stickyTilt,
+  stickyTone,
 } from "../domain/stickies.ts";
 import {
   FOLDER_COLOR_LABELS,
   FOLDER_COLOR_ORDER,
+  type Db,
   type Folder,
   type FolderPaint,
   type Item,
+  type Priority,
   type Tag,
+  type ViewMode,
 } from "../domain/types.ts";
 import { eventsOnDay } from "../lib/gcalEvents.ts";
 import { CalendarBoard, PlanTargets } from "./calendar.tsx";
@@ -72,9 +87,15 @@ import {
 } from "./folders.tsx";
 import { GcalDayEvents, GcalNote } from "./gcal.tsx";
 import { loadDemo } from "./guide.tsx";
-import { MarkdownField, type MarkdownHandle } from "./markdownField.tsx";
+import {
+  FormatBar,
+  MarkdownField,
+  type LinkHit,
+  type MarkdownHandle,
+} from "./markdownField.tsx";
+import { placeOp } from "./move.ts";
 import { useUi } from "./state.tsx";
-import { BoardView, ItemList, ListView } from "./tasks.tsx";
+import { BoardView, deleteItems, ItemList, ListView } from "./tasks.tsx";
 import {
   Button,
   cx,
@@ -498,6 +519,111 @@ export function InboxPage() {
   );
 }
 
+function ViewSwitch({
+  view,
+  taskCount,
+  noteCount,
+  onChoose,
+}: {
+  view: ViewMode;
+  taskCount: number;
+  noteCount: number;
+  onChoose: (view: ViewMode) => void;
+}) {
+  const taskLayout = useRef<"list" | "board">(
+    view === "board" ? "board" : "list"
+  );
+  if (view === "list" || view === "board") taskLayout.current = view;
+  const tasksOn = view === "list" || view === "board";
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-lg bg-black/5 p-0.5 dark:bg-white/10"
+      role="group"
+      aria-label="Pohled"
+    >
+      <div
+        className={cx(
+          "flex items-center rounded-md pr-0.5",
+          tasksOn && "bg-raised shadow-[var(--shadow)]"
+        )}
+      >
+        <button
+          type="button"
+          aria-pressed={tasksOn}
+          className={cx(
+            "flex items-center gap-1.5 rounded-md py-1 pr-1 pl-2.5 text-sm whitespace-nowrap",
+            tasksOn ? "text-ink!" : "text-muted! hover:text-ink!"
+          )}
+          onClick={() => onChoose(taskLayout.current)}
+        >
+          Úkoly
+          <span className="text-xs tabular-nums text-muted">{taskCount}</span>
+        </button>
+        {(
+          [
+            ["list", List, "Seznam"],
+            ["board", Columns3, "Nástěnka"],
+          ] as const
+        ).map(([mode, Icon, label]) => (
+          <button
+            key={mode}
+            type="button"
+            aria-label={label}
+            title={label}
+            aria-pressed={view === mode}
+            className={cx(
+              "grid size-7 place-items-center rounded-md",
+              view === mode
+                ? "bg-black/5 text-ink! dark:bg-white/10"
+                : "text-muted! hover:text-ink!"
+            )}
+            onClick={() => onChoose(mode)}
+          >
+            <Icon size={16} />
+          </button>
+        ))}
+      </div>
+      <span
+        className="mx-0.5 h-4 w-px shrink-0 bg-black/10 dark:bg-white/15"
+        aria-hidden
+      />
+      <button
+        type="button"
+        aria-pressed={view === "notes"}
+        className={cx(
+          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm whitespace-nowrap",
+          view === "notes"
+            ? "bg-raised text-ink! shadow-[var(--shadow)]"
+            : "text-muted! hover:text-ink!"
+        )}
+        onClick={() => onChoose("notes")}
+      >
+        Poznámky
+        <span className="text-xs tabular-nums text-muted">{noteCount}</span>
+      </button>
+      <span
+        className="mx-0.5 h-4 w-px shrink-0 bg-black/10 dark:bg-white/15"
+        aria-hidden
+      />
+      <button
+        type="button"
+        aria-label="Kalendář"
+        title="Kalendář"
+        aria-pressed={view === "calendar"}
+        className={cx(
+          "grid size-7 place-items-center rounded-md",
+          view === "calendar"
+            ? "bg-raised text-ink! shadow-[var(--shadow)]"
+            : "text-muted! hover:text-ink!"
+        )}
+        onClick={() => onChoose("calendar")}
+      >
+        <CalendarDays size={16} />
+      </button>
+    </div>
+  );
+}
+
 function FolderScreen({
   folder,
   intro,
@@ -507,7 +633,8 @@ function FolderScreen({
 }) {
   const { db } = useSnap();
   const ui = useUi();
-  const view = folder.defaultView;
+  const view =
+    ui.glance?.folderId === folder.id ? ui.glance.view : folder.defaultView;
   const items = folderItems(db, folder.id, false);
   const nested = descendantFolderIds(db, folder.id)
     .map((id) => byId(db.folders, id))
@@ -546,41 +673,22 @@ function FolderScreen({
           </div>
           {intro}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex rounded-md bg-black/5 p-0.5 dark:bg-white/10">
-            {(
-              [
-                ["list", List],
-                ["board", Columns3],
-                ["notes", StickyNote],
-                ["calendar", CalendarDays],
-              ] as const
-            ).map(([mode, Icon]) => (
-              <button
-                key={mode}
-                type="button"
-                aria-label={viewLabel(mode)}
-                title={viewLabel(mode)}
-                aria-pressed={view === mode}
-                className={cx(
-                  "grid size-8 place-items-center rounded-sm",
-                  view === mode
-                    ? "bg-accent text-accent-ink"
-                    : "text-muted hover:text-ink"
-                )}
-                onClick={() =>
-                  dispatch({
-                    type: "updateFolder",
-                    id: folder.id,
-                    patch: { defaultView: mode },
-                  })
-                }
-              >
-                <Icon size={18} />
-              </button>
-            ))}
-          </div>
-        </div>
+        <ViewSwitch
+          view={view}
+          taskCount={
+            tasks.filter((item) => ui.showDone || isOpenItem(db, item)).length
+          }
+          noteCount={notes.length}
+          onChoose={(mode) => {
+            ui.setGlance(null);
+            if (folder.defaultView === mode) return;
+            dispatch({
+              type: "updateFolder",
+              id: folder.id,
+              patch: { defaultView: mode },
+            });
+          }}
+        />
       </div>
       {view === "list" && (
         <>
@@ -616,7 +724,7 @@ function noteSource(note: { title: string; body: string | null }) {
   const body = note.body?.replace(/\r\n/g, "\n") ?? "";
   if (!body) return note.title;
   const first = body.split("\n", 1)[0] ?? "";
-  const plain = first.replace(/^#{1,6}\s+/, "").trim();
+  const plain = plainNoteTitle(first);
   if (plain === note.title) return body;
   return `${note.title}\n${body}`;
 }
@@ -630,141 +738,71 @@ function NoteTask({ id }: { id: string }) {
   );
 }
 
-function noteParts(value: string) {
-  const text = value.replace(/\r\n/g, "\n");
-  const breakAt = text.indexOf("\n");
-  if (breakAt === -1) return { title: text, body: "" };
-  return { title: text.slice(0, breakAt), body: text.slice(breakAt + 1) };
+function noteLinks(db: Db, query: string): LinkHit[] {
+  const found = query.trim()
+    ? searchItems(db, query)
+    : visibleItems(db)
+        .slice()
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+        .slice(0, 8);
+  return found.slice(0, 8).map((item) => ({
+    id: item.id,
+    title: item.title.trim() || (item.type === "note" ? "Poznámka" : "Úkol"),
+    kind: item.type === "note" ? "note" : "task",
+  }));
 }
 
-function noteText(title: string, body: string) {
-  if (!body) return title;
-  return `${title}\n${body}`;
+function useNoteSuggest() {
+  const { db } = useSnap();
+  return (query: string) => noteLinks(db, query);
 }
 
-function NoteRead({ source }: { source: string }) {
-  const { title, body } = noteParts(source);
-  const heading = title.replace(/^#{1,6}\s+/, "");
-  return (
-    <div className="grid gap-1">
-      {heading.trim() && (
-        <div className="note-title break-words">{heading}</div>
-      )}
-      {body.trim() && (
-        <MarkdownField
-          value={body}
-          editable={false}
-          embed={(id) => <NoteTask id={id} />}
-        />
-      )}
-    </div>
-  );
-}
-
-function NoteField({
-  value,
-  label,
-  autoFocus = false,
-  onDone,
+function LiveNote({
+  source,
+  onCommit,
+  editor,
 }: {
-  value: string;
-  label: string;
-  autoFocus?: boolean;
-  onDone: (next: string | null) => void;
+  source: string;
+  onCommit: (text: string) => void;
+  editor: RefObject<MarkdownHandle | null>;
 }) {
-  const start = noteParts(value);
-  const titleRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<MarkdownHandle>(null);
-  const titleValue = useRef(start.title);
-  const bodyValue = useRef(start.body);
-  const skip = useRef(false);
-  const done = useRef(false);
-  const [title, setTitle] = useState(start.title);
-  const [body, setBody] = useState(start.body);
-  const finish = (next: string | null) => {
-    if (done.current) return;
-    done.current = true;
-    onDone(next);
-  };
-  const textNow = () => noteText(titleValue.current, bodyValue.current);
+  const suggest = useNoteSuggest();
+  const box = useRef<HTMLDivElement>(null);
+  const draft = useRef(source);
+  const [text, setText] = useState(source);
+  useEffect(() => {
+    if (source === draft.current) return;
+    const active = document.activeElement;
+    if (active instanceof Node && box.current?.contains(active)) return;
+    draft.current = source;
+    setText(source);
+  }, [source]);
   return (
-    <div className="grid gap-1">
-      <div>
-        <input
-          ref={titleRef}
-          autoFocus={autoFocus}
-          aria-label={label}
-          placeholder="Nadpis"
-          className="note-title block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
-          value={title}
-          onChange={(event) => {
-            titleValue.current = event.target.value;
-            setTitle(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.preventDefault();
-              skip.current = true;
-              event.currentTarget.blur();
-              return;
-            }
-            if (event.nativeEvent.isComposing) return;
-            if (
-              event.key === "ArrowDown" &&
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.metaKey &&
-              !event.ctrlKey
-            ) {
-              event.preventDefault();
-              bodyRef.current?.focus(event.currentTarget.selectionStart ?? 0);
-              return;
-            }
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            bodyRef.current?.focus();
-          }}
-          onBlur={() => {
-            window.setTimeout(() => {
-              const active = document.activeElement;
-              const box = titleRef.current?.closest(".grid");
-              if (active instanceof Node && box?.contains(active)) return;
-              finish(skip.current ? null : textNow());
-            }, 0);
-          }}
-        />
-      </div>
+    <div ref={box} className="flex min-h-0 flex-1 flex-col">
       <MarkdownField
-        ref={bodyRef}
-        value={body}
-        label="Text poznámky"
-        placeholder="Text…"
-        onChange={(next) => {
-          bodyValue.current = next;
-          setBody(next);
-        }}
-        onEscape={() => {
-          skip.current = true;
-        }}
+        ref={editor}
+        value={text}
+        formats
+        suggest={suggest}
+        leadClassName="note-title break-words"
+        placeholder="Nadpis"
+        tailPlaceholder="Text…"
+        label="Poznámka"
+        className="min-h-16 flex-1 cursor-text"
         embed={(id) => <NoteTask id={id} />}
-        onExit={(dir, column) => {
-          if (dir > 0) return;
-          const input = titleRef.current;
-          if (!input) return;
-          const at = Math.min(column, input.value.length);
-          input.focus();
-          input.setSelectionRange(at, at);
+        onChange={(next) => {
+          draft.current = next;
+          setText(next);
         }}
         onBlur={() => {
-          window.setTimeout(() => {
-            const active = document.activeElement;
-            if (
-              active instanceof Node &&
-              titleRef.current?.closest(".grid")?.contains(active)
-            )
-              return;
-            finish(skip.current ? null : textNow());
-          }, 0);
+          const next = draft.current;
+          if (next.trim() === source.trim()) return;
+          if (!splitNoteDraft(next)) {
+            draft.current = source;
+            setText(source);
+            return;
+          }
+          onCommit(next);
         }}
       />
     </div>
@@ -779,6 +817,7 @@ function Notes({
   notes: ReturnType<typeof folderItems>;
 }) {
   const { db } = useSnap();
+  const ui = useUi();
   const board = useRef<HTMLDivElement>(null);
   const [columns, setColumns] = useState(1);
   const folder = byId(db.folders, folderId);
@@ -801,19 +840,37 @@ function Notes({
     }
     node.style.height = `${bottom}px`;
   });
-  const create = (text: string) => {
-    const parsed = splitNoteDraft(text);
-    if (!parsed) return;
+  const create = (draft: NoteDraft) => {
+    const parsed = splitNoteDraft(draft.text);
+    const at =
+      draft.x != null && draft.y != null
+        ? {
+            x: Math.round(Math.max(0, draft.x)),
+            y: Math.round(Math.max(0, draft.y)),
+          }
+        : null;
+    if (!parsed && !at) return;
+    const pinZ =
+      at == null
+        ? null
+        : notes.reduce((max, note) => Math.max(max, note.pinZ ?? 0), 0) + 1;
     dispatch({
       type: "createItem",
       item: newItem({
         id: nanoid(10),
         folderId,
-        title: parsed.title,
-        body: parsed.body,
+        title: parsed?.title ?? "Poznámka",
+        body: parsed?.body ?? null,
         type: "note",
         statusId,
         sortOrder: keyAtStart(notes.map((note) => note.sortOrder)),
+        priority: draft.priority,
+        paper: draft.paper,
+        pinX: at?.x ?? null,
+        pinY: at?.y ?? null,
+        pinZ,
+        pinW: draft.width,
+        pinH: draft.height,
       }),
     });
   };
@@ -830,10 +887,49 @@ function Notes({
       },
     });
   };
+  const file = (id: string, targetId: string) => {
+    const note = byId(db.items, id);
+    const folder = byId(db.folders, targetId);
+    if (!note || !folder || note.folderId === folder.id) return false;
+    const mapped = mapStatus(db, note.statusId, folder.id);
+    const go = (statusId: string) => {
+      dispatch({
+        type: "batch",
+        ops: [
+          placeOp(db, id, folder.id, statusId),
+          {
+            type: "updateItem",
+            id,
+            patch: { pinX: null, pinY: null, pinZ: null },
+          },
+        ],
+      });
+      ui.pushToast(`Zařazeno do ${folder.name}`, true);
+    };
+    if (mapped.choices.length > 1) {
+      ui.askChoice({
+        title: "Který stav?",
+        options: mapped.choices.map((status) => ({
+          id: status.id,
+          label: status.name,
+        })),
+        onPick: go,
+      });
+      return false;
+    }
+    if (!mapped.statusId) return false;
+    go(mapped.statusId);
+    return true;
+  };
   const composerAt = stickySlot(0, columns);
   return (
     <div ref={board} className="relative mt-1 min-h-[32rem]">
-      <NoteComposer x={composerAt.x} y={composerAt.y} onCommit={create} />
+      <NoteComposer
+        x={composerAt.x}
+        y={composerAt.y}
+        onCommit={create}
+        onDiscard={() => ui.pushToast("Koncept je zahozený")}
+      />
       {notes.map((note, index) => {
         const auto = stickySlot(index + 1, columns);
         return (
@@ -845,6 +941,12 @@ function Notes({
             y={note.pinY ?? auto.y}
             z={(note.pinZ ?? index) + 2}
             onDrop={drop}
+            onFile={file}
+            onTrash={() =>
+              deleteItems([note], ui.pushToast, () => {
+                if (ui.selectedId === note.id) ui.setSelected(null);
+              })
+            }
             onCommit={(text) => {
               const parsed = splitNoteDraft(text);
               if (!parsed) return;
@@ -865,6 +967,24 @@ function Notes({
                 patch: { pinW: width, pinH: height },
               });
             }}
+            onPaper={(paper) => {
+              const current = stickyTone(note.paper, note.id).index;
+              if (note.paper == null && current === paper) return;
+              if (note.paper === paper) return;
+              dispatch({
+                type: "updateItem",
+                id: note.id,
+                patch: { paper },
+              });
+            }}
+            onPriority={(priority) => {
+              if (priority === note.priority) return;
+              dispatch({
+                type: "updateItem",
+                id: note.id,
+                patch: { priority },
+              });
+            }}
           />
         );
       })}
@@ -872,137 +992,803 @@ function Notes({
   );
 }
 
+type NoteDraft = {
+  text: string;
+  paper: number;
+  priority: Priority | null;
+  width: number | null;
+  height: number | null;
+  x: number | null;
+  y: number | null;
+};
+
+const PRIORITY_LADDER = ["low", null, "high", "urgent"] as const;
+
+function priorityIndex(priority: Priority | null) {
+  const index = PRIORITY_LADDER.indexOf(priority);
+  return index === -1 ? 1 : index;
+}
+
+function priorityNext(priority: Priority | null): Priority | null {
+  const index = priorityIndex(priority);
+  return PRIORITY_LADDER[(index + 1) % PRIORITY_LADDER.length] ?? null;
+}
+
+function PriorityGlyph({ priority }: { priority: Priority | null }) {
+  if (priority === "urgent")
+    return (
+      <ChevronsUp
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#d23b32] dark:text-[#ff6d60]"
+      />
+    );
+  if (priority === "high")
+    return (
+      <ChevronUp
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#c8960a] dark:text-[#f0c14a]"
+      />
+    );
+  if (priority === "low")
+    return (
+      <ChevronDown
+        size={15}
+        strokeWidth={2.5}
+        className="text-[#2f8a3c] dark:text-[#7dca78]"
+      />
+    );
+  return <span className="size-1.5 rounded-full bg-muted" />;
+}
+
+function NotePriority({
+  priority,
+  onChange,
+}: {
+  priority: Priority | null;
+  onChange: (priority: Priority | null) => void;
+}) {
+  const [live, setLive] = useState<Priority | null | undefined>(undefined);
+  const origin = useRef<{ y: number; index: number } | null>(null);
+  const dragged = useRef(false);
+  const shown = live === undefined ? priority : live;
+  return (
+    <button
+      type="button"
+      aria-label={`Priorita ${priorityLabel(shown)}. Táhni nahoru nebo dolů.`}
+      title="Táhni nahoru pro vyšší prioritu"
+      className="relative grid size-6 shrink-0 cursor-ns-resize touch-none place-items-center"
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (event.button !== 0) return;
+        origin.current = { y: event.clientY, index: priorityIndex(priority) };
+        dragged.current = false;
+        setLive(priority);
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Prohlížeč pointer nepustí, gesto stejně doběhne.
+        }
+      }}
+      onPointerMove={(event) => {
+        const start = origin.current;
+        if (!start) return;
+        event.stopPropagation();
+        const delta = start.y - event.clientY;
+        if (Math.abs(delta) > 8) dragged.current = true;
+        const index = Math.min(
+          PRIORITY_LADDER.length - 1,
+          Math.max(0, start.index + Math.round(delta / 22))
+        );
+        setLive(PRIORITY_LADDER[index] ?? null);
+      }}
+      onPointerUp={(event) => {
+        const start = origin.current;
+        origin.current = null;
+        if (!start) return;
+        event.stopPropagation();
+        const delta = start.y - event.clientY;
+        if (Math.abs(delta) >= 8) {
+          const index = Math.min(
+            PRIORITY_LADDER.length - 1,
+            Math.max(0, start.index + Math.round(delta / 22))
+          );
+          onChange(PRIORITY_LADDER[index] ?? null);
+        }
+        setLive(undefined);
+      }}
+      onPointerCancel={() => {
+        origin.current = null;
+        setLive(undefined);
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (dragged.current) {
+          dragged.current = false;
+          return;
+        }
+        onChange(priorityNext(priority));
+      }}
+    >
+      {live !== undefined && (
+        <span className="pointer-events-none absolute top-full left-1/2 z-30 mt-1 -translate-x-1/2 rounded-sm bg-raised px-1.5 py-0.5 text-xs whitespace-nowrap text-ink shadow-[var(--shadow)]">
+          {priorityLabel(shown)}
+        </span>
+      )}
+      <PriorityGlyph priority={shown} />
+    </button>
+  );
+}
+
+function StickyTools({
+  paper,
+  priority,
+  onPaper,
+  onPriority,
+  editor,
+}: {
+  paper: number;
+  priority: Priority | null;
+  onPaper: (paper: number) => void;
+  onPriority: (priority: Priority | null) => void;
+  editor: RefObject<MarkdownHandle | null>;
+}) {
+  const suggest = useNoteSuggest();
+  const button = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [box, setBox] = useState<{ top: number; left: number } | null>(null);
+  const tone = STICKY_PAPERS[paper] ?? STICKY_PAPERS[0];
+  useEffect(() => {
+    if (!open) return;
+    const onPointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (button.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-card-settings]"))
+        return;
+      setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+  return (
+    <div
+      data-sticky-tool=""
+      className="mt-1 flex shrink-0 items-center justify-between gap-2 pr-6"
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+    >
+      <button
+        ref={button}
+        type="button"
+        aria-label="Nastavení kartičky"
+        aria-expanded={open}
+        className="grid size-6 place-items-center rounded-md"
+        onClick={() => {
+          const rect = button.current?.getBoundingClientRect();
+          if (!rect) return;
+          const width = 280;
+          setBox({
+            top: Math.min(rect.bottom + 6, window.innerHeight - 24),
+            left: Math.min(Math.max(8, rect.left), window.innerWidth - width - 8),
+          });
+          setOpen((value) => !value);
+        }}
+      >
+        <span
+          className="size-3.5 rounded-full"
+          style={{
+            background: tone.bg,
+            boxShadow: open
+              ? "0 0 0 1.5px #2a241c"
+              : "inset 0 0 0 1px rgb(42 36 28 / 22%)",
+          }}
+        />
+      </button>
+      {open && box
+        ? createPortal(
+            <div
+              data-card-settings=""
+              data-format-bar=""
+              className="fixed z-[90] max-h-[70vh] w-[17.5rem] overflow-auto rounded-lg border border-line bg-raised p-2 shadow-[var(--shadow)]"
+              style={{ top: box.top, left: box.left }}
+              onMouseDown={(event) => {
+                if (event.target instanceof HTMLInputElement) return;
+                event.preventDefault();
+              }}
+            >
+              <p className="mb-1 px-1 text-xs text-muted">Barva</p>
+              <div className="mb-2 flex items-center gap-1 px-1" role="radiogroup" aria-label="Barva">
+                {STICKY_PAPERS.map((swatch, index) => {
+                  const selected = index === paper;
+                  const label =
+                    swatch.name.charAt(0).toLocaleUpperCase("cs") +
+                    swatch.name.slice(1);
+                  return (
+                    <button
+                      key={swatch.bg}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={label}
+                      title={label}
+                      className="grid size-6 place-items-center rounded-md"
+                      onClick={() => onPaper(index)}
+                    >
+                      <span
+                        className="size-3.5 rounded-full"
+                        style={{
+                          background: swatch.bg,
+                          boxShadow: selected
+                            ? "0 0 0 1.5px #2a241c"
+                            : "inset 0 0 0 1px rgb(42 36 28 / 22%)",
+                        }}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mb-1 px-1 text-xs text-muted">Formát</p>
+              <FormatBar
+                onFormat={(action) => editor.current?.format(action)}
+                suggest={suggest}
+              />
+            </div>,
+            document.body
+          )
+        : null}
+      <NotePriority priority={priority} onChange={onPriority} />
+    </div>
+  );
+}
+
+function NoteResize({
+  width,
+  height,
+  onLive,
+  onResize,
+}: {
+  width: number;
+  height: number | null;
+  onLive: (size: { w: number; h: number } | null) => void;
+  onResize: (width: number, height: number) => void;
+}) {
+  const handle = useRef<HTMLDivElement>(null);
+  const resize = useRef<{
+    px: number;
+    py: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  const currentHeight = () => {
+    const host = handle.current?.offsetParent;
+    return (
+      height ?? (host instanceof HTMLElement ? host.offsetHeight : STICKY_H)
+    );
+  };
+  return (
+    <div
+      ref={handle}
+      data-resize=""
+      role="button"
+      aria-label="Velikost poznámky"
+      className="absolute right-0 bottom-0 z-10 grid size-6 cursor-nwse-resize touch-none place-items-end p-1"
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const rect = handle.current?.offsetParent?.getBoundingClientRect();
+        if (!rect) return;
+        resize.current = {
+          px: event.clientX,
+          py: event.clientY,
+          w: rect.width,
+          h: rect.height,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const start = resize.current;
+        if (!start) return;
+        event.stopPropagation();
+        const next = clampStickySize(
+          start.w + event.clientX - start.px,
+          start.h + event.clientY - start.py
+        );
+        onLive({ w: next.width, h: next.height });
+      }}
+      onPointerUp={(event) => {
+        const start = resize.current;
+        resize.current = null;
+        if (!start) return;
+        event.stopPropagation();
+        const next = clampStickySize(
+          start.w + event.clientX - start.px,
+          start.h + event.clientY - start.py
+        );
+        if (
+          next.width === Math.round(start.w) &&
+          next.height === Math.round(start.h)
+        ) {
+          onLive(null);
+          return;
+        }
+        onResize(next.width, next.height);
+      }}
+      onPointerCancel={() => {
+        resize.current = null;
+        onLive(null);
+      }}
+      onKeyDown={(event) => {
+        const horizontal =
+          event.key === "ArrowRight" ? 16 : event.key === "ArrowLeft" ? -16 : 0;
+        const vertical =
+          event.key === "ArrowDown" ? 16 : event.key === "ArrowUp" ? -16 : 0;
+        if (!horizontal && !vertical) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const current = clampStickySize(width, currentHeight());
+        const next = clampStickySize(
+          current.width + horizontal,
+          current.height + vertical
+        );
+        onResize(next.width, next.height);
+      }}
+    >
+      <span className="size-2.5 border-r-2 border-b-2 border-[#2a241c]/40" />
+    </div>
+  );
+}
+
+const NOTE_HOLD_MS = 200;
+const NOTE_DRAG_SLOP = 6;
+const NOTE_HOLD_SLOP = 12;
+
+function focusNote(root: HTMLElement | null) {
+  root?.querySelector<HTMLElement>("[contenteditable='true']")?.focus();
+}
+
+type StickyPress = {
+  fromText: boolean;
+  ready: boolean;
+  release: () => void;
+};
+
+function attachStickyPress(
+  event: ReactPointerEvent<HTMLElement>,
+  hooks: {
+    onArm: () => void;
+    onCancel: () => void;
+    onSlide: (event: PointerEvent) => void;
+    onFinish: () => void;
+  }
+): StickyPress | null {
+  if (event.button !== 0) return null;
+  const target = event.target;
+  if (
+    target instanceof Element &&
+    target.closest(
+      "a, textarea, input, button, [data-resize], [data-sticky-tool]"
+    )
+  )
+    return null;
+  const fromText =
+    target instanceof Element &&
+    Boolean(target.closest("[contenteditable='true']"));
+  const pointerId = event.pointerId;
+  const x0 = event.clientX;
+  const y0 = event.clientY;
+  const host = event.currentTarget;
+  let timer: number | null = null;
+  let stopped = false;
+  const press: StickyPress = {
+    fromText,
+    ready: !fromText,
+    release: () => {
+      if (stopped) return;
+      stopped = true;
+      if (timer != null) window.clearTimeout(timer);
+      timer = null;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    },
+  };
+  const onMove = (native: PointerEvent) => {
+    if (stopped || native.pointerId !== pointerId) return;
+    if (!press.ready) {
+      if (Math.hypot(native.clientX - x0, native.clientY - y0) < NOTE_HOLD_SLOP)
+        return;
+      press.release();
+      hooks.onCancel();
+      return;
+    }
+    hooks.onSlide(native);
+  };
+  const onUp = (native: PointerEvent) => {
+    if (stopped || native.pointerId !== pointerId) return;
+    const ready = press.ready;
+    press.release();
+    if (ready) hooks.onFinish();
+    else hooks.onCancel();
+  };
+  const onCancel = (native: PointerEvent) => {
+    if (stopped || native.pointerId !== pointerId) return;
+    press.release();
+    hooks.onCancel();
+  };
+  if (!fromText) {
+    try {
+      host.setPointerCapture(pointerId);
+    } catch {
+      // Prohlížeč pointer nepustí, gesto stejně doběhne nad kartou.
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return press;
+  }
+  timer = window.setTimeout(() => {
+    timer = null;
+    if (stopped) return;
+    press.ready = true;
+    try {
+      host.setPointerCapture(pointerId);
+    } catch {
+      // Pointer už mezitím skončil, tah stejně jede přes okno.
+    }
+    hooks.onArm();
+  }, NOTE_HOLD_MS);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onCancel);
+  return press;
+}
+
 function NoteComposer({
   x,
   y,
   onCommit,
+  onDiscard,
 }: {
   x: number;
   y: number;
-  onCommit: (text: string) => void;
+  onCommit: (draft: NoteDraft) => void;
+  onDiscard: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
-  const titleRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<MarkdownHandle>(null);
-  const titleValue = useRef("");
-  const bodyValue = useRef("");
+  const editor = useRef<MarkdownHandle>(null);
+  const suggest = useNoteSuggest();
+  const draft = useRef("");
   const committed = useRef<string | null>(null);
   const skip = useRef(false);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const commit = () => {
+  const holding = useRef(false);
+  const suppress = useRef(false);
+  const chosen = useRef<Omit<NoteDraft, "text" | "x" | "y">>({
+    paper: 0,
+    priority: null,
+    width: null,
+    height: null,
+  });
+  const origin = useRef<{
+    px: number;
+    py: number;
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+  } | null>(null);
+  const place = useRef<{ x: number; y: number } | null>(null);
+  const overTrash = useRef(false);
+  const moved = useRef(false);
+  const fromText = useRef(false);
+  const gesture = useRef<StickyPress | null>(null);
+  const [held, setHeld] = useState(false);
+  const [text, setText] = useState("");
+  const [paper, setPaper] = useState(0);
+  const [priority, setPriority] = useState<Priority | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number | null }>({
+    w: STICKY_W,
+    h: null,
+  });
+  const [live, setLive] = useState<{ w: number; h: number } | null>(null);
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [generation, setGeneration] = useState(0);
+  const shown = live ?? size;
+  const tone = STICKY_PAPERS[paper] ?? STICKY_PAPERS[0];
+  chosen.current = {
+    paper,
+    priority,
+    width: shown.h == null ? null : shown.w,
+    height: shown.h,
+  };
+  useEffect(() => {
+    if (!drag) return;
+    const previous = document.body.style.cursor;
+    document.body.style.cursor = "grabbing";
+    return () => {
+      document.body.style.cursor = previous;
+    };
+  }, [drag]);
+  useEffect(() => {
+    return () => gesture.current?.release();
+  }, []);
+  const cancelPress = () => {
+    gesture.current = null;
+    origin.current = null;
+    place.current = null;
+    moved.current = false;
+    overTrash.current = false;
+    holding.current = false;
+    markNoteFolder(null);
+    setDrag(null);
+    setHeld(false);
+  };
+  const reset = (fresh: boolean) => {
+    draft.current = "";
+    setText("");
+    setPaper(0);
+    setPriority(null);
+    setSize({ w: STICKY_W, h: null });
+    setLive(null);
+    if (fresh) setGeneration((n) => n + 1);
+  };
+  const commit = (at: { x: number; y: number } | null) => {
     if (skip.current) return;
-    const text = noteText(titleValue.current, bodyValue.current);
-    if (committed.current === text) return;
-    if (!splitNoteDraft(text)) return;
-    committed.current = text;
-    titleValue.current = "";
-    bodyValue.current = "";
-    setTitle("");
-    setBody("");
-    onCommit(text);
+    const value = draft.current;
+    if (committed.current === value && !at) return;
+    if (!splitNoteDraft(value) && !at) return;
+    committed.current = value;
+    const next = chosen.current;
+    suppress.current = true;
+    reset(at != null);
+    onCommit({ text: value, ...next, x: at?.x ?? null, y: at?.y ?? null });
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        suppress.current = false;
+      });
+    });
   };
   const leave = () => {
     window.setTimeout(() => {
+      if (holding.current) return;
       const active = document.activeElement;
       if (active instanceof Node && box.current?.contains(active)) return;
+      if (active instanceof Element && active.closest("[data-format-bar]")) return;
       if (skip.current) {
         skip.current = false;
         return;
       }
-      commit();
+      commit(null);
     }, 0);
   };
+  const slideRef = useRef<(event: PointerEvent) => void>(() => {});
+  const finishRef = useRef<() => void>(() => {});
+  slideRef.current = (event) => {
+    const start = origin.current;
+    const node = box.current;
+    if (!start || !node || !gesture.current?.ready) return;
+    const dx = event.clientX - start.px;
+    const dy = event.clientY - start.py;
+    if (!moved.current && Math.hypot(dx, dy) < NOTE_DRAG_SLOP) return;
+    if (!moved.current) window.getSelection()?.removeAllRanges();
+    moved.current = true;
+    event.preventDefault();
+    const raw = { x: start.x + dx, y: start.y + dy };
+    place.current = { x: Math.max(0, raw.x), y: Math.max(0, raw.y) };
+    setDrag(raw);
+    const hit = folderUnder(event.clientX, event.clientY, node);
+    const trash = hit?.kind === "trash";
+    overTrash.current = trash;
+    markNoteFolder(trash ? "trash" : null);
+  };
+  finishRef.current = () => {
+    if (!holding.current) return;
+    const next = place.current;
+    const didMove = moved.current;
+    const trashed = overTrash.current;
+    const text = fromText.current;
+    origin.current = null;
+    place.current = null;
+    moved.current = false;
+    overTrash.current = false;
+    fromText.current = false;
+    holding.current = false;
+    gesture.current?.release();
+    gesture.current = null;
+    setHeld(false);
+    markNoteFolder(null);
+    setDrag(null);
+    if (didMove && trashed) {
+      const had = Boolean(splitNoteDraft(draft.current));
+      skip.current = true;
+      committed.current = draft.current;
+      reset(true);
+      if (had) onDiscard();
+      return;
+    }
+    if (didMove && next) {
+      commit(next);
+      return;
+    }
+    if (!text) focusNote(box.current);
+  };
+  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const press = attachStickyPress(event, {
+      onArm: () => setHeld(true),
+      onCancel: cancelPress,
+      onSlide: (native) => slideRef.current(native),
+      onFinish: () => finishRef.current(),
+    });
+    if (!press) return;
+    gesture.current?.release();
+    gesture.current = press;
+    fromText.current = press.fromText;
+    holding.current = true;
+    const rect = box.current?.getBoundingClientRect();
+    origin.current = {
+      px: event.clientX,
+      py: event.clientY,
+      x,
+      y,
+      left: rect?.left ?? x,
+      top: rect?.top ?? y,
+    };
+    place.current = { x, y };
+    moved.current = false;
+    overTrash.current = false;
+  };
+  const floating =
+    drag && origin.current
+      ? {
+          left: origin.current.left + (drag.x - origin.current.x),
+          top: origin.current.top + (drag.y - origin.current.y),
+        }
+      : null;
   return (
     <div
       ref={box}
       data-sticky=""
-      className="sticky-note absolute min-h-[148px] rounded-sm px-4 pt-5 pb-4"
+      data-note-composer=""
+      className={cx(
+        "sticky-note absolute flex flex-col rounded-sm px-4 pt-5 pb-2",
+        shown.h == null ? "min-h-[148px]" : "overflow-hidden",
+        drag || held ? "cursor-grabbing" : "cursor-grab"
+      )}
+      data-note-held={drag || held ? "" : undefined}
+      data-note-drag={drag ? "" : undefined}
       style={{
-        left: x,
-        top: y,
-        width: STICKY_W,
-        background: "#f4e4a6",
-        zIndex: 1,
+        left: floating ? floating.left : drag?.x ?? x,
+        top: floating ? floating.top : drag?.y ?? y,
+        width: shown.w,
+        height: shown.h ?? undefined,
+        background: tone.bg,
+        zIndex: drag ? 80 : 1,
+        position: floating ? "fixed" : undefined,
+        pointerEvents: floating ? "none" : undefined,
+        transform: floating ? "rotate(0deg) scale(1.03)" : undefined,
+      }}
+      onBlur={leave}
+      onPointerDown={beginDrag}
+      onPointerMove={(event) => slideRef.current(event.nativeEvent)}
+      onPointerUp={() => finishRef.current()}
+      onPointerCancel={() => {
+        if (!holding.current) return;
+        const text = fromText.current;
+        origin.current = null;
+        place.current = null;
+        moved.current = false;
+        overTrash.current = false;
+        fromText.current = false;
+        holding.current = false;
+        gesture.current?.release();
+        gesture.current = null;
+        setHeld(false);
+        markNoteFolder(null);
+        setDrag(null);
+        if (!text) commit(null);
       }}
     >
       <span
-        className="absolute inset-x-0 top-0 h-2"
-        style={{ background: "#e6cf7c" }}
+        className="absolute inset-x-0 top-0 z-10 h-2 cursor-grab touch-none"
+        style={{ background: tone.edge }}
       />
-      <div className="grid gap-1">
-        <div>
-          <input
-            ref={titleRef}
-            autoFocus
-            aria-label="Nadpis"
-            placeholder="Nadpis"
-            data-note-composer=""
-            className="note-title block w-full border-0 bg-transparent p-0 outline-none placeholder:text-[#6d6456]"
-            value={title}
-            onChange={(event) => {
-              committed.current = null;
-              titleValue.current = event.target.value;
-              setTitle(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                skip.current = true;
-                setTitle("");
-                setBody("");
-                event.currentTarget.blur();
-                return;
-              }
-              if (event.nativeEvent.isComposing) return;
-              if (
-                event.key === "ArrowDown" &&
-                !event.shiftKey &&
-                !event.altKey &&
-                !event.metaKey &&
-                !event.ctrlKey
-              ) {
-                event.preventDefault();
-                bodyRef.current?.focus(event.currentTarget.selectionStart ?? 0);
-                return;
-              }
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              bodyRef.current?.focus();
-            }}
-            onBlur={leave}
-          />
-        </div>
-        <MarkdownField
-          ref={bodyRef}
-          value={body}
-          label="Text poznámky"
-          placeholder="Text…"
-          className="min-h-16"
-          onChange={(next) => {
-            committed.current = null;
-            bodyValue.current = next;
-            setBody(next);
-          }}
-          onEscape={() => {
-            skip.current = true;
-            setTitle("");
-            setBody("");
-          }}
-          embed={(id) => <NoteTask id={id} />}
-          onExit={(dir, column) => {
-            if (dir > 0) return;
-            const input = titleRef.current;
-            if (!input) return;
-            const at = Math.min(column, input.value.length);
-            input.focus();
-            input.setSelectionRange(at, at);
-          }}
-          onBlur={leave}
-        />
-      </div>
+      <MarkdownField
+        key={generation}
+        ref={editor}
+        value={text}
+        formats
+        suggest={suggest}
+        autoFocus
+        leadClassName="note-title break-words"
+        placeholder="Nadpis"
+        tailPlaceholder="Text…"
+        label="Nová poznámka"
+        className="min-h-16 flex-1 cursor-text"
+        embed={(id) => <NoteTask id={id} />}
+        onChange={(next) => {
+          if (suppress.current) return;
+          committed.current = null;
+          draft.current = next;
+          setText(next);
+        }}
+        onEscape={() => {
+          skip.current = true;
+          reset(false);
+        }}
+        onBlur={leave}
+      />
+      <StickyTools
+        paper={paper}
+        priority={priority}
+        onPaper={setPaper}
+        onPriority={setPriority}
+        editor={editor}
+      />
+      <NoteResize
+        width={shown.w}
+        height={shown.h}
+        onLive={setLive}
+        onResize={(width, height) => {
+          setSize({ w: width, h: height });
+          setLive(null);
+        }}
+      />
     </div>
   );
+}
+
+type NoteHit = { kind: "folder"; id: string } | { kind: "trash" };
+
+function folderUnder(x: number, y: number, card: HTMLElement): NoteHit | null {
+  for (const node of document.elementsFromPoint(x, y)) {
+    if (!(node instanceof Element) || node === card || card.contains(node))
+      continue;
+    if (node.closest("[data-note-trash]")) return { kind: "trash" };
+    const row = node.closest<HTMLElement>(
+      "[data-folder-row], [data-note-folder]"
+    );
+    const id = row?.dataset.folderRow ?? row?.dataset.noteFolder;
+    if (id) return { kind: "folder", id };
+  }
+  return null;
+}
+
+let noteOver: string | null = null;
+
+function markNoteFolder(id: string | null) {
+  if (noteOver === id) return;
+  const paint = (key: string, on: boolean) => {
+    const selector =
+      key === "trash"
+        ? "[data-note-trash]"
+        : `[data-folder-row="${CSS.escape(
+            key
+          )}"], [data-note-folder="${CSS.escape(key)}"]`;
+    for (const row of document.querySelectorAll(selector)) {
+      if (on) row.setAttribute("data-note-over", "");
+      else row.removeAttribute("data-note-over");
+    }
+  };
+  if (noteOver) paint(noteOver, false);
+  noteOver = id;
+  if (!id) return;
+  paint(id, true);
+  if (id !== "trash")
+    document.dispatchEvent(new CustomEvent("ordo-note-over", { detail: id }));
 }
 
 function StickyCard({
@@ -1013,7 +1799,11 @@ function StickyCard({
   z,
   onCommit,
   onDrop,
+  onFile,
+  onTrash,
   onResize,
+  onPaper,
+  onPriority,
 }: {
   note: Item;
   source: string;
@@ -1022,10 +1812,15 @@ function StickyCard({
   z: number;
   onCommit: (text: string) => void;
   onDrop: (id: string, x: number, y: number) => void;
+  onFile: (id: string, folderId: string) => boolean;
+  onTrash: () => void;
   onResize: (width: number, height: number) => void;
+  onPaper: (paper: number) => void;
+  onPriority: (priority: Priority | null) => void;
 }) {
+  const ui = useUi();
   const card = useRef<HTMLElement>(null);
-  const [editing, setEditing] = useState(false);
+  const editor = useRef<MarkdownHandle>(null);
   const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
   const [live, setLive] = useState<{ w: number; h: number } | null>(null);
   const origin = useRef<{
@@ -1033,23 +1828,38 @@ function StickyCard({
     py: number;
     x: number;
     y: number;
+    left: number;
+    top: number;
   } | null>(null);
   const place = useRef<{ x: number; y: number } | null>(null);
-  const resize = useRef<{
-    px: number;
-    py: number;
-    w: number;
-    h: number;
-  } | null>(null);
+  const overFolder = useRef<string | null>(null);
   const moved = useRef(false);
-  const ignoreClick = useRef(false);
-  const paper = stickyPaper(note.id);
+  const fromText = useRef(false);
+  const gesture = useRef<StickyPress | null>(null);
+  const [held, setHeld] = useState(false);
+  const tone = stickyTone(note.paper, note.id);
   const left = drag?.x ?? x;
   const top = drag?.y ?? y;
+  const dragging = drag !== null;
+  const floating =
+    drag && origin.current
+      ? {
+          left: origin.current.left + (drag.x - origin.current.x),
+          top: origin.current.top + (drag.y - origin.current.y),
+        }
+      : null;
+  useEffect(() => {
+    if (!dragging) return;
+    const previous = document.body.style.cursor;
+    document.body.style.cursor = "grabbing";
+    return () => {
+      document.body.style.cursor = previous;
+    };
+  }, [dragging]);
   const width = live?.w ?? note.pinW ?? STICKY_W;
   const height = live?.h ?? note.pinH ?? null;
   useEffect(() => {
-    if (!drag) return;
+    if (!drag || origin.current) return;
     if (
       Math.round(x) === Math.round(drag.x) &&
       Math.round(y) === Math.round(drag.y)
@@ -1060,188 +1870,174 @@ function StickyCard({
     if (!live) return;
     if (note.pinW === live.w && note.pinH === live.h) setLive(null);
   }, [note.pinW, note.pinH, live]);
-  const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || editing) return;
-    const target = event.target;
-    if (
-      target instanceof Element &&
-      target.closest(
-        "a, textarea, input, button, [contenteditable='true'], [data-resize]"
-      )
-    )
-      return;
-    origin.current = { px: event.clientX, py: event.clientY, x: left, y: top };
-    place.current = { x: left, y: top };
+  useEffect(() => {
+    return () => gesture.current?.release();
+  }, []);
+  const cancelPress = () => {
+    gesture.current = null;
+    origin.current = null;
+    place.current = null;
     moved.current = false;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    overFolder.current = null;
+    markNoteFolder(null);
+    setDrag(null);
+    setHeld(false);
   };
-  const beginResize = (event: ReactPointerEvent<HTMLElement>) => {
-    if (event.button !== 0) return;
+  const slideRef = useRef<(event: PointerEvent) => void>(() => {});
+  const finishRef = useRef<() => void>(() => {});
+  slideRef.current = (event) => {
+    const start = origin.current;
+    const node = card.current;
+    if (!start || !node || !gesture.current?.ready) return;
+    const dx = event.clientX - start.px;
+    const dy = event.clientY - start.py;
+    if (!moved.current && Math.hypot(dx, dy) < NOTE_DRAG_SLOP) return;
+    if (!moved.current) window.getSelection()?.removeAllRanges();
+    moved.current = true;
     event.preventDefault();
-    event.stopPropagation();
-    const rect = card.current?.getBoundingClientRect();
-    if (!rect) return;
-    resize.current = {
+    const raw = { x: start.x + dx, y: start.y + dy };
+    place.current = { x: Math.max(0, raw.x), y: Math.max(0, raw.y) };
+    setDrag(raw);
+    const hit = folderUnder(event.clientX, event.clientY, node);
+    const target =
+      hit?.kind === "trash"
+        ? "trash"
+        : hit?.kind === "folder" && hit.id !== note.folderId
+        ? hit.id
+        : null;
+    overFolder.current = target;
+    markNoteFolder(target);
+  };
+  finishRef.current = () => {
+    const didMove = moved.current;
+    if (!gesture.current && !didMove) return;
+    const next = place.current;
+    const folder = overFolder.current;
+    const text = fromText.current;
+    origin.current = null;
+    place.current = null;
+    moved.current = false;
+    overFolder.current = null;
+    fromText.current = false;
+    gesture.current?.release();
+    gesture.current = null;
+    setHeld(false);
+    markNoteFolder(null);
+    if (!didMove) {
+      if (!text) focusNote(card.current);
+      return;
+    }
+    if (folder === "trash") {
+      onTrash();
+      setDrag(null);
+      return;
+    }
+    if (folder) {
+      if (!onFile(note.id, folder)) setDrag(null);
+      return;
+    }
+    if (next) {
+      setDrag(next);
+      onDrop(note.id, next.x, next.y);
+    } else setDrag(null);
+  };
+  const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    const press = attachStickyPress(event, {
+      onArm: () => setHeld(true),
+      onCancel: cancelPress,
+      onSlide: (native) => slideRef.current(native),
+      onFinish: () => finishRef.current(),
+    });
+    if (!press) return;
+    gesture.current?.release();
+    gesture.current = press;
+    fromText.current = press.fromText;
+    const host = card.current?.offsetParent;
+    const hostBox =
+      host instanceof HTMLElement ? host.getBoundingClientRect() : null;
+    origin.current = {
       px: event.clientX,
       py: event.clientY,
-      w: rect.width,
-      h: rect.height,
+      x: left,
+      y: top,
+      left: hostBox ? hostBox.left + left : left,
+      top: hostBox ? hostBox.top + top : top,
     };
-    event.currentTarget.setPointerCapture(event.pointerId);
+    place.current = { x: left, y: top };
+    moved.current = false;
+    overFolder.current = null;
   };
   return (
     <article
       ref={card}
       data-note=""
+      data-note-id={note.id}
       data-sticky=""
+      data-activity-focus={ui.focusId === note.id ? "" : undefined}
       className={cx(
-        "sticky-note absolute flex flex-col rounded-sm px-4 pt-5 pb-6",
+        "sticky-note absolute flex flex-col rounded-sm px-4 pt-5 pb-2",
         height === null ? "min-h-[148px]" : "overflow-hidden",
-        drag ? "cursor-grabbing" : editing ? "cursor-text" : "cursor-grab",
-        !editing && "touch-none select-none"
+        drag || held ? "cursor-grabbing" : "cursor-grab"
       )}
+      data-note-held={drag || held ? "" : undefined}
+      data-note-drag={drag ? "" : undefined}
       style={{
-        left,
-        top,
+        left: floating ? floating.left : left,
+        top: floating ? floating.top : top,
         width,
         height: height ?? undefined,
-        zIndex: drag || live ? 50 : z,
-        background: paper.bg,
-        transform: drag
+        zIndex: drag || live ? 80 : z,
+        background: tone.bg,
+        position: floating ? "fixed" : undefined,
+        pointerEvents: floating ? "none" : undefined,
+        transform: floating
           ? "rotate(0deg) scale(1.03)"
           : `rotate(${stickyTilt(note.id)}deg)`,
       }}
       onPointerDown={beginDrag}
-      onPointerMove={(event) => {
-        const start = origin.current;
-        if (!start) return;
-        const dx = event.clientX - start.px;
-        const dy = event.clientY - start.py;
-        if (!moved.current && Math.hypot(dx, dy) < 6) return;
-        moved.current = true;
-        const next = {
-          x: Math.max(0, start.x + dx),
-          y: Math.max(0, start.y + dy),
-        };
-        place.current = next;
-        setDrag(next);
-      }}
-      onPointerUp={() => {
-        const next = place.current;
-        const didMove = moved.current;
-        origin.current = null;
-        moved.current = false;
-        if (!didMove || !next) return;
-        ignoreClick.current = true;
-        onDrop(note.id, next.x, next.y);
-      }}
+      onPointerMove={(event) => slideRef.current(event.nativeEvent)}
+      onPointerUp={() => finishRef.current()}
       onPointerCancel={() => {
         origin.current = null;
         place.current = null;
         moved.current = false;
+        overFolder.current = null;
+        fromText.current = false;
+        gesture.current?.release();
+        gesture.current = null;
+        setHeld(false);
+        markNoteFolder(null);
         setDrag(null);
-      }}
-      onClick={(event) => {
-        if (ignoreClick.current) {
-          ignoreClick.current = false;
-          return;
-        }
-        const target = event.target;
-        if (
-          target instanceof Element &&
-          target.closest(
-            "a, textarea, input, button, [contenteditable='true'], [data-resize]"
-          )
-        )
-          return;
-        setEditing(true);
       }}
     >
       <span
-        className="absolute inset-x-0 top-0 h-2"
-        style={{ background: paper.edge }}
+        className="absolute inset-x-0 top-0 z-10 h-2 cursor-grab touch-none"
+        style={{ background: tone.edge }}
       />
-      <div className={cx("min-h-0", height !== null && "flex-1 overflow-auto")}>
-        {editing ? (
-          <NoteField
-            value={source}
-            label="Nadpis"
-            autoFocus
-            onDone={(text) => {
-              setEditing(false);
-              if (text === null || text.trim() === source.trim()) return;
-              onCommit(text);
-            }}
-          />
-        ) : (
-          <NoteRead source={source} />
-        )}
-      </div>
       <div
-        data-resize=""
-        role="button"
-        aria-label="Velikost poznámky"
-        className="absolute right-0 bottom-0 z-10 grid size-6 cursor-nwse-resize touch-none place-items-end p-1"
-        onPointerDown={beginResize}
-        onPointerMove={(event) => {
-          const start = resize.current;
-          if (!start) return;
-          event.stopPropagation();
-          const next = clampStickySize(
-            start.w + event.clientX - start.px,
-            start.h + event.clientY - start.py
-          );
-          setLive({ w: next.width, h: next.height });
-        }}
-        onPointerUp={(event) => {
-          const start = resize.current;
-          resize.current = null;
-          if (!start) return;
-          event.stopPropagation();
-          const next = clampStickySize(
-            start.w + event.clientX - start.px,
-            start.h + event.clientY - start.py
-          );
-          if (
-            next.width === Math.round(start.w) &&
-            next.height === Math.round(start.h)
-          ) {
-            setLive(null);
-            return;
-          }
-          setLive({ w: next.width, h: next.height });
-          onResize(next.width, next.height);
-        }}
-        onPointerCancel={() => {
-          resize.current = null;
-          setLive(null);
-        }}
-        onKeyDown={(event) => {
-          const horizontal =
-            event.key === "ArrowRight"
-              ? 16
-              : event.key === "ArrowLeft"
-              ? -16
-              : 0;
-          const vertical =
-            event.key === "ArrowDown" ? 16 : event.key === "ArrowUp" ? -16 : 0;
-          if (!horizontal && !vertical) return;
-          event.preventDefault();
-          event.stopPropagation();
-          const current = clampStickySize(
-            width,
-            height ?? card.current?.offsetHeight ?? STICKY_H
-          );
-          const next = clampStickySize(
-            current.width + horizontal,
-            current.height + vertical
-          );
-          setLive({ w: next.width, h: next.height });
-          onResize(next.width, next.height);
-        }}
+        className={cx(
+          "flex min-h-0 flex-1 flex-col",
+          height !== null && "overflow-auto"
+        )}
       >
-        <span className="size-2.5 border-r-2 border-b-2 border-[#2a241c]/40" />
+        <LiveNote source={source} onCommit={onCommit} editor={editor} />
       </div>
+      <StickyTools
+        paper={tone.index}
+        priority={note.priority}
+        onPaper={onPaper}
+        onPriority={onPriority}
+        editor={editor}
+      />
+      <NoteResize
+        width={width}
+        height={height}
+        onLive={setLive}
+        onResize={(nextWidth, nextHeight) => {
+          setLive({ w: nextWidth, h: nextHeight });
+          onResize(nextWidth, nextHeight);
+        }}
+      />
     </article>
   );
 }
@@ -1249,8 +2045,20 @@ function StickyCard({
 export function TrashPage() {
   const { db } = useSnap();
   const ui = useUi();
-  const items = db.items.filter((item) => item.isDeleted);
-  const folders = db.folders.filter((folder) => folder.isDeleted);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const today = todayKey();
+  const entries = [
+    ...db.folders
+      .filter((folder) => folder.isDeleted)
+      .map((folder) => ({
+        kind: "folder" as const,
+        folder,
+        at: folder.updatedAt,
+      })),
+    ...db.items
+      .filter((item) => item.isDeleted)
+      .map((item) => ({ kind: "item" as const, item, at: item.updatedAt })),
+  ].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
@@ -1269,58 +2077,342 @@ export function TrashPage() {
           Vyprázdnit
         </Button>
       </div>
-      {items.length === 0 && folders.length === 0 && (
+      {entries.length === 0 && (
         <p className="text-sm text-muted">Koš je prázdný.</p>
       )}
-      {folders.map((folder) => (
-        <TrashRow
-          key={folder.id}
-          title={folder.name}
-          onRestore={() => dispatch({ type: "restoreFolder", id: folder.id })}
-          onPurge={() => {
-            dispatch({ type: "purgeFolder", id: folder.id });
-            ui.pushToast(`Složka „${folder.name}“ je smazaná natrvalo`, true);
-          }}
-        />
-      ))}
-      {items.map((item) => (
-        <TrashRow
-          key={item.id}
-          title={item.title.trim() || "Bez názvu"}
-          onRestore={() => dispatch({ type: "restoreItem", id: item.id })}
-          onPurge={() => {
-            dispatch({ type: "purgeItem", id: item.id });
-            ui.pushToast(
-              `„${item.title.trim() || "Bez názvu"}“ je smazané natrvalo`,
-              true
-            );
-          }}
-        />
-      ))}
+      <div className="divide-y divide-line">
+        {entries.map((entry) =>
+          entry.kind === "folder" ? (
+            <TrashFolder
+              key={entry.folder.id}
+              db={db}
+              folder={entry.folder}
+              today={today}
+              open={openId === entry.folder.id}
+              onToggle={() =>
+                setOpenId((current) =>
+                  current === entry.folder.id ? null : entry.folder.id
+                )
+              }
+              onOpenItem={setOpenId}
+              onRestore={() =>
+                dispatch({ type: "restoreFolder", id: entry.folder.id })
+              }
+              onPurge={() => {
+                dispatch({ type: "purgeFolder", id: entry.folder.id });
+                ui.pushToast(
+                  `Složka „${entry.folder.name}“ je smazaná natrvalo`,
+                  true
+                );
+              }}
+            />
+          ) : (
+            <TrashItem
+              key={entry.item.id}
+              db={db}
+              item={entry.item}
+              today={today}
+              open={openId === entry.item.id}
+              onToggle={() =>
+                setOpenId((current) =>
+                  current === entry.item.id ? null : entry.item.id
+                )
+              }
+              onRestore={() =>
+                dispatch({ type: "restoreItem", id: entry.item.id })
+              }
+              onPurge={() => {
+                dispatch({ type: "purgeItem", id: entry.item.id });
+                ui.pushToast(
+                  `„${
+                    entry.item.title.trim() || "Bez názvu"
+                  }“ je smazané natrvalo`,
+                  true
+                );
+              }}
+            />
+          )
+        )}
+      </div>
     </div>
   );
 }
 
-function TrashRow({
-  title,
+function TrashItem({
+  db,
+  item,
+  today,
+  open,
+  onToggle,
   onRestore,
   onPurge,
 }: {
-  title: string;
+  db: Db;
+  item: Item;
+  today: string;
+  open: boolean;
+  onToggle: () => void;
   onRestore: () => void;
   onPurge: () => void;
 }) {
+  const title = item.title.trim() || "Bez názvu";
+  const kind = item.type === "note" ? "Poznámka" : "Úkol";
+  const place = trashPlace(db, item.folderId);
+  const when = deletedWhen(item.updatedAt, today);
+  const source = item.type === "note" ? noteSource(item) : item.body ?? "";
+  const hasText =
+    item.type === "note" ? source !== item.title : Boolean(source.trim());
+  const status = byId(db.statuses, item.statusId);
+  const due = whenLabel(item, today);
+  const tags = tagsOf(db, item.id);
+  const person = byId(db.people, item.assigneeId);
   return (
-    <div className="flex items-center justify-between gap-2 py-1">
-      <span className="min-w-0 truncate">{title}</span>
-      <span className="flex shrink-0 gap-1">
-        <Button onClick={onRestore}>Obnovit</Button>
-        <Button tone="danger" onClick={onPurge}>
-          Smazat
-        </Button>
-      </span>
+    <div className="py-3">
+      <div className="flex items-start justify-between gap-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
+          {open ? (
+            <ChevronDown size={16} className="mt-1 shrink-0 text-muted" />
+          ) : (
+            <ChevronRight size={16} className="mt-1 shrink-0 text-muted" />
+          )}
+          <span className="min-w-0">
+            <span className="block truncate font-medium">{title}</span>
+            <span className="mt-0.5 block truncate text-sm text-muted">
+              {kind}
+              {" · "}
+              {place.text}
+              {place.gone ? " (v koši)" : ""}
+              {when ? ` · ${when}` : ""}
+            </span>
+          </span>
+        </button>
+        <span className="flex shrink-0 gap-1">
+          <Button onClick={onRestore}>Obnovit</Button>
+          <Button tone="danger" onClick={onPurge}>
+            Smazat
+          </Button>
+        </span>
+      </div>
+      {open && (
+        <div className="mt-3 ml-6 grid gap-3">
+          {hasText && (
+            <div className="rounded-md bg-black/[0.03] px-3 py-2 dark:bg-white/[0.04]">
+              <MarkdownField
+                value={source}
+                editable={false}
+                label={title}
+                {...(item.type === "note"
+                  ? { leadClassName: "note-title break-words" }
+                  : {})}
+              />
+            </div>
+          )}
+          <dl className="grid gap-1.5 text-sm">
+            <TrashFact label="Druh">{kind}</TrashFact>
+            <TrashFact label="Složka">
+              {place.href ? (
+                <Link
+                  href={place.href}
+                  className="underline decoration-line underline-offset-2"
+                >
+                  {place.text}
+                </Link>
+              ) : (
+                place.text
+              )}
+              {place.gone && (
+                <span className="text-muted">
+                  {" "}
+                  je v koši. Položka se po obnovení zařadí do{" "}
+                  {inboxFolder(db)?.name ?? "Nezařazené"}.
+                </span>
+              )}
+            </TrashFact>
+            {item.type === "task" && status && (
+              <TrashFact label="Stav">{status.name}</TrashFact>
+            )}
+            {due && <TrashFact label="Termín">{due}</TrashFact>}
+            {item.priority && (
+              <TrashFact label="Priorita">
+                {priorityLabel(item.priority)}
+              </TrashFact>
+            )}
+            {person && !person.isDeleted && (
+              <TrashFact label="Člověk">{person.name}</TrashFact>
+            )}
+            {tags.length > 0 && (
+              <TrashFact label="Štítky">
+                <span className="flex flex-wrap gap-1.5">
+                  {tags.map((tag) => (
+                    <TagMark key={tag.id} name={tag.name} color={tag.color} />
+                  ))}
+                </span>
+              </TrashFact>
+            )}
+            {item.origin && <TrashFact label="Odkud">{item.origin}</TrashFact>}
+            {item.place && <TrashFact label="Kam">{item.place}</TrashFact>}
+            {when && <TrashFact label="Smazáno">{when}</TrashFact>}
+          </dl>
+        </div>
+      )}
     </div>
   );
+}
+
+function TrashFolder({
+  db,
+  folder,
+  today,
+  open,
+  onToggle,
+  onOpenItem,
+  onRestore,
+  onPurge,
+}: {
+  db: Db;
+  folder: Folder;
+  today: string;
+  open: boolean;
+  onToggle: () => void;
+  onOpenItem: (id: string) => void;
+  onRestore: () => void;
+  onPurge: () => void;
+}) {
+  const parent = folderTrail(db, folder.parentId);
+  const parentText =
+    parent.length > 0 ? parent.map((entry) => entry.name).join(" / ") : "Domů";
+  const parentGone = parent.some((entry) => entry.isDeleted);
+  const parentHref =
+    parent.length === 0 || parentGone
+      ? null
+      : parent[parent.length - 1]?.system === "inbox"
+      ? "/inbox"
+      : `/folder/${parent[parent.length - 1]?.id}`;
+  const inside = db.items.filter(
+    (item) => item.isDeleted && item.folderId === folder.id
+  );
+  const when = deletedWhen(folder.updatedAt, today);
+  return (
+    <div className="py-3">
+      <div className="flex items-start justify-between gap-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-start gap-2 text-left"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
+          {open ? (
+            <ChevronDown size={16} className="mt-1 shrink-0 text-muted" />
+          ) : (
+            <ChevronRight size={16} className="mt-1 shrink-0 text-muted" />
+          )}
+          <span className="min-w-0">
+            <span className="block truncate font-medium">{folder.name}</span>
+            <span className="mt-0.5 block truncate text-sm text-muted">
+              Složka · {parentText}
+              {when ? ` · ${when}` : ""}
+            </span>
+          </span>
+        </button>
+        <span className="flex shrink-0 gap-1">
+          <Button onClick={onRestore}>Obnovit</Button>
+          <Button tone="danger" onClick={onPurge}>
+            Smazat
+          </Button>
+        </span>
+      </div>
+      {open && (
+        <dl className="mt-3 ml-6 grid gap-1.5 text-sm">
+          <TrashFact label="Druh">Složka</TrashFact>
+          <TrashFact label="Byla v">
+            {parentHref ? (
+              <Link
+                href={parentHref}
+                className="underline decoration-line underline-offset-2"
+              >
+                {parentText}
+              </Link>
+            ) : (
+              parentText
+            )}
+          </TrashFact>
+          <TrashFact label="Uvnitř">
+            {inside.length === 0 ? (
+              <span className="text-muted">Žádné smazané položky.</span>
+            ) : (
+              <span className="grid gap-1">
+                {inside.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="truncate text-left underline decoration-line underline-offset-2"
+                    onClick={() => onOpenItem(item.id)}
+                  >
+                    {item.title.trim() || "Bez názvu"}
+                  </button>
+                ))}
+              </span>
+            )}
+          </TrashFact>
+          {when && <TrashFact label="Smazáno">{when}</TrashFact>}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function TrashFact({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-2">
+      <dt className="text-muted">{label}</dt>
+      <dd className="min-w-0">{children}</dd>
+    </div>
+  );
+}
+
+function trashPlace(
+  db: Db,
+  folderId: string
+): {
+  text: string;
+  gone: boolean;
+  href: string | null;
+} {
+  const trail = folderTrail(db, folderId);
+  const folder = trail[trail.length - 1];
+  if (!folder) return { text: "Neznámá složka", gone: true, href: null };
+  const gone = trail.some((entry) => entry.isDeleted);
+  return {
+    text: trail.map((entry) => entry.name).join(" / "),
+    gone,
+    href: gone
+      ? null
+      : folder.system === "inbox"
+      ? "/inbox"
+      : `/folder/${folder.id}`,
+  };
+}
+
+function deletedWhen(at: string, today: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  const day = formatDay(dateKey(date), today);
+  const time = date.toLocaleTimeString("cs-CZ", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${day.charAt(0).toLocaleUpperCase("cs")}${day.slice(1)} ${time}`;
 }
 
 function tagSwatch(color: string | null) {
